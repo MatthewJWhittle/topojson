@@ -25,4 +25,5 @@ class Slider(TypedDict, total=False):
 Quantize: TypeAlias = bool | float | Transform
 Algorithm: TypeAlias = Literal["dp", "vw"]
 Package: TypeAlias = Literal["shapely", "simplification", "geos"]
+SmoothMethod: TypeAlias = Literal["chaikin", "catmull_rom"]
 WindingOrder: TypeAlias = Literal["CW_CCW", "CCW_CW"]

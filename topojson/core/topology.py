@@ -9,7 +9,15 @@ from typing import IO, TYPE_CHECKING, Any, Literal, Self, cast, overload
 
 import numpy as np
 
-from .._types import Algorithm, Package, Quantize, Slider, Transform, WindingOrder
+from .._types import (
+    Algorithm,
+    Package,
+    Quantize,
+    Slider,
+    SmoothMethod,
+    Transform,
+    WindingOrder,
+)
 from ..ops import (
     arc_areas,
     arc_coordinates,
@@ -20,6 +28,7 @@ from ..ops import (
     restore_collapsed_rings,
     simplify,
     simplify_keep,
+    smooth_arcs,
     validate_transform,
 )
 from ..utils import (
@@ -739,6 +748,107 @@ class Topology(Hashmap):
         self.options.toposimplify = result.options.toposimplify
         return None
 
+    @overload
+    def toposmooth(
+        self,
+        method: SmoothMethod = "chaikin",
+        *,
+        iterations: int = 2,
+        samples: int = 6,
+        inplace: Literal[False] = False,
+    ) -> Self: ...
+
+    @overload
+    def toposmooth(
+        self,
+        method: SmoothMethod = "chaikin",
+        *,
+        iterations: int = 2,
+        samples: int = 6,
+        inplace: Literal[True],
+    ) -> None: ...
+
+    def toposmooth(
+        self,
+        method: SmoothMethod = "chaikin",
+        *,
+        iterations: int = 2,
+        samples: int = 6,
+        inplace: bool = False,
+    ) -> Self | None:
+        """
+        Smooth constructed arcs without altering topological relations. Apply after
+        `toposimplify`: each shared border is one arc, so neighbours stay coincident.
+        Arc endpoints stay fixed so T- and multi-way junctions do not move.
+
+        Default is Chaikin corner-cutting (two iterations). Catmull–Rom is the
+        alternate interpolating spline (passes through the simplified vertices).
+        Smoothed arcs are stored as floats; the construction-grid `transform` is
+        dropped so re-quantization does not stair-step the curve. Optional fine
+        `topoquantize` remains available at export.
+
+        Parameters
+        ----------
+        method : {"chaikin", "catmull_rom"}, optional
+            Smoothing algorithm. Default is `"chaikin"`.
+        iterations : int, optional
+            Chaikin corner-cutting passes. Default is `2`. Hard-capped at `5`.
+            Ignored for Catmull–Rom.
+        samples : int, optional
+            Catmull–Rom points inserted per segment between control vertices.
+            Default is `6`. Ignored for Chaikin.
+        inplace : bool, optional
+            If `True`, do operation inplace and return `None`.
+            Default is `False`.
+
+        Returns
+        -------
+        object or None
+            Topology with smoothed float arcs if `inplace` is `False`.
+        """
+        if method not in ("chaikin", "catmull_rom"):
+            raise ValueError(
+                f"method must be 'chaikin' or 'catmull_rom', got: {method!r}"
+            )
+        if method == "chaikin":
+            if not isinstance(iterations, int) or isinstance(iterations, bool):
+                raise ValueError(f"iterations must be an int, got: {iterations!r}")
+            if iterations < 0 or iterations > 5:
+                raise ValueError(
+                    f"iterations must be between 0 and 5 inclusive, got: {iterations}"
+                )
+        else:
+            if not isinstance(samples, int) or isinstance(samples, bool):
+                raise ValueError(f"samples must be an int, got: {samples!r}")
+            if samples < 0:
+                raise ValueError(f"samples must be >= 0, got: {samples}")
+
+        result = self._copy()
+        result.options.toposmooth = method
+        arcs = result.output["arcs"]
+        if arcs:
+            np_arcs = arc_coordinates(arcs, result.output.get("transform"))
+            result.output["arcs"] = smooth_arcs(
+                np_arcs,
+                method=method,
+                iterations=iterations,
+                samples=samples,
+            )
+            # Do not re-quantize onto the construction grid (would stair-step curves).
+            result.output.pop("transform", None)
+            lsbs = bounds(result.output["arcs"])
+            ptbs = bounds(result.output["coordinates"])
+            result.output["bbox"] = compare_bounds(lsbs, ptbs)
+
+        if not inplace:
+            return result
+        self.output["arcs"] = result.output["arcs"]
+        self.output.pop("transform", None)
+        if "bbox" in result.output:
+            self.output["bbox"] = result.output["bbox"]
+        self.options.toposmooth = result.options.toposmooth
+        return None
+
     def _grid(self) -> float | dict[str, Any] | None:
         """The grid of the options to quantize on again: a transform (dict), a
         quantize factor, or `None` when the options set no quantization."""
@@ -921,6 +1031,17 @@ class Topology(Hashmap):
     def _incremental_object_name(self, object_name: str | None) -> str:
         """Check that the Topology can be updated in place and resolve the object."""
         options = self.options
+        if (
+            options.presimplify
+            or options.toposimplify
+            or options.topoquantize
+            or options.toposmooth
+        ):
+            raise NotImplementedError(
+                "add, remove and sync work on the unsimplified arcs. Apply toposimplify, "
+                "toposmooth, or topoquantize to the result instead, e.g. "
+                "topo.toposimplify(epsilon, inplace=False)."
+            )
         if "transform" not in self.output or not options.topology:
             raise ValueError(
                 "add, remove and sync need a quantized topology (prequantize, the "
@@ -929,12 +1050,6 @@ class Topology(Hashmap):
         if options.shared_coords:
             raise NotImplementedError(
                 "add, remove and sync do not support shared_coords=True yet."
-            )
-        if options.presimplify or options.toposimplify or options.topoquantize:
-            raise NotImplementedError(
-                "add, remove and sync work on the unsimplified arcs. Apply toposimplify "
-                "or topoquantize to the result instead, e.g. "
-                "topo.toposimplify(epsilon, inplace=False)."
             )
         if options.ignore_index:
             raise NotImplementedError(

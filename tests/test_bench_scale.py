@@ -89,7 +89,11 @@ def test_measure_row_fields_jsonl(tmp_path):
         profile=False,
     )
     assert row["failed"] is False
-    assert row["smooth"] == "smooth_not_implemented"
+    assert row["smooth"] == "ok"
+    assert row["smooth_method"] == "chaikin"
+    assert row["smooth_iterations"] == 2
+    assert row["n_vertices_smoothed"] > 0
+    assert row["smooth_growth"] >= 1.0
     assert row["n_arcs"] > 0
     assert row["json_bytes"] > 0
     assert row["t_extract_s"] is None  # profile off
@@ -111,7 +115,9 @@ def test_measure_with_toposimplify_records_fields():
         simplify_m=[1.0, 2.0],
     )
     assert row["failed"] is False
-    assert row["smooth"] == "smooth_not_implemented"
+    assert row["smooth"] == "ok"
+    assert row["smooth_method"] == "chaikin"
+    assert row["n_vertices_smoothed"] >= row["n_vertices_simplified"]
     assert row["simplify_tolerance_m"] == 2.0
     assert row["simplify_wall_s"] >= 0
     assert row["n_vertices_simplified"] > 0
@@ -124,6 +130,17 @@ def test_measure_smooth_hook_absent_api():
     topo = MagicMock(spec=["output"])
     topo.output = {"arcs": []}
     assert measure_smooth(topo) == {"smooth": "smooth_not_implemented"}
+
+
+def test_measure_smooth_hook_with_api():
+    gdf = gpd.read_file(FILES / "static_natural_earth.gpkg")
+    import topojson
+
+    topo = topojson.Topology(gdf, prequantize=True).toposimplify(1.0)
+    row = measure_smooth(topo)
+    assert row["smooth"] == "ok"
+    assert row["smooth_wall_s"] >= 0
+    assert row["smooth_growth"] >= 1.0
 
 
 def test_measure_profile_fills_stages():
