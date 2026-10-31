@@ -1441,7 +1441,7 @@ def chaikin(xy, iterations=2):
     xy : array-like of shape (n, 2)
         Arc coordinates in float space
     iterations : int
-        Number of corner-cutting passes (growth ~2× per pass)
+        Number of corner-cutting passes (growth ~2x per pass)
 
     Returns
     -------
@@ -1468,7 +1468,7 @@ def chaikin(xy, iterations=2):
 
 
 def _lerp_knot(t_a, t_b, pa, pb, t):
-    """Linear blend on a Catmull–Rom knot interval; stable when knots coincide."""
+    """Linear blend on a Catmull-Rom knot interval; stable when knots coincide."""
     den = t_b - t_a
     if abs(den) < 1e-15:
         return np.asarray(pa, dtype=np.float64)
@@ -1477,7 +1477,7 @@ def _lerp_knot(t_a, t_b, pa, pb, t):
 
 
 def _catmull_rom_point(p0, p1, p2, p3, t0, t1, t2, t3, t):
-    """One centripetal Catmull–Rom sample (Barry–Goldman)."""
+    """One centripetal Catmull-Rom sample (Barry-Goldman)."""
     a1 = _lerp_knot(t0, t1, p0, p1, t)
     a2 = _lerp_knot(t1, t2, p1, p2, t)
     a3 = _lerp_knot(t2, t3, p2, p3, t)
@@ -1488,7 +1488,7 @@ def _catmull_rom_point(p0, p1, p2, p3, t0, t1, t2, t3, t):
 
 def catmull_rom(xy, samples=6, alpha=0.5):
     """
-    Centripetal Catmull–Rom resampling of an open polyline with endpoints fixed.
+    Centripetal Catmull-Rom resampling of an open polyline with endpoints fixed.
 
     The curve passes through every control point. Tangents at the ends use a
     duplicated endpoint so smoothing never borrows coordinates from a neighbouring
@@ -1519,7 +1519,7 @@ def catmull_rom(xy, samples=6, alpha=0.5):
     def knot(ti, pi, pj):
         d = float(np.linalg.norm(pj - pi))
         # Duplicated endpoints (open-arc tangents) make d==0; keep knots strictly
-        # increasing so Barry–Goldman denominators stay defined.
+        # increasing so Barry-Goldman denominators stay defined.
         return ti + (d**alpha if d > 0 else 1e-8)
 
     out = [pts[0]]
@@ -1558,9 +1558,9 @@ def smooth_arcs(arcs, method="chaikin", iterations=2, samples=6):
     method : {"chaikin", "catmull_rom"}
         Smoothing algorithm
     iterations : int
-        Chaikin passes (ignored for Catmull–Rom)
+        Chaikin passes (ignored for Catmull-Rom)
     samples : int
-        Catmull–Rom points inserted per segment (ignored for Chaikin)
+        Catmull-Rom points inserted per segment (ignored for Chaikin)
 
     Returns
     -------

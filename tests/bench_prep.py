@@ -176,8 +176,6 @@ def retrieve(key: str, dest: Path) -> Path:
             except NotImplementedError:
                 # Living England (and some Defra zips) use Deflate64; Python's
                 # zipfile cannot inflate those members — fall back to unzip(1).
-                import subprocess
-
                 subprocess.run(
                     ["unzip", "-o", str(path), "-d", str(extract_dir)],
                     check=True,

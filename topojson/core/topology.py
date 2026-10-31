@@ -781,7 +781,7 @@ class Topology(Hashmap):
         `toposimplify`: each shared border is one arc, so neighbours stay coincident.
         Arc endpoints stay fixed so T- and multi-way junctions do not move.
 
-        Default is Chaikin corner-cutting (two iterations). Catmull–Rom is the
+        Default is Chaikin corner-cutting (two iterations). Catmull-Rom is the
         alternate interpolating spline (passes through the simplified vertices).
         Smoothed arcs are stored as floats; the construction-grid `transform` is
         dropped so re-quantization does not stair-step the curve. Optional fine
@@ -793,9 +793,9 @@ class Topology(Hashmap):
             Smoothing algorithm. Default is `"chaikin"`.
         iterations : int, optional
             Chaikin corner-cutting passes. Default is `2`. Hard-capped at `5`.
-            Ignored for Catmull–Rom.
+            Ignored for Catmull-Rom.
         samples : int, optional
-            Catmull–Rom points inserted per segment between control vertices.
+            Catmull-Rom points inserted per segment between control vertices.
             Default is `6`. Ignored for Chaikin.
         inplace : bool, optional
             If `True`, do operation inplace and return `None`.

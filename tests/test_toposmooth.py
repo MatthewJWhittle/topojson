@@ -1,4 +1,4 @@
-"""Tests for Topology.toposmooth (arc-wise Chaikin / Catmull–Rom)."""
+"""Tests for Topology.toposmooth (arc-wise Chaikin / Catmull-Rom)."""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ def _two_squares():
 def test_chaikin_pins_endpoints_and_grows():
     xy = np.array([[0.0, 0.0], [1.0, 1.0], [2.0, 0.0], [3.0, 1.0]])
     out = chaikin(xy, iterations=2)
-    assert out.shape[0] == 4 * len(xy)  # 2× per iteration
+    assert out.shape[0] == 4 * len(xy)  # 2x per iteration
     np.testing.assert_allclose(out[0], xy[0])
     np.testing.assert_allclose(out[-1], xy[-1])
 
@@ -63,8 +63,10 @@ def test_toposmooth_shared_edge_stays_coincident():
     # No polygonal overlap / gap: intersection is a line (shared boundary).
     assert shared.geom_type in ("LineString", "MultiLineString", "GeometryCollection")
     assert gdf.geometry.iloc[0].intersects(gdf.geometry.iloc[1])
-    assert not gdf.geometry.iloc[0].buffer(-1e-9).intersects(
-        gdf.geometry.iloc[1].buffer(-1e-9)
+    assert (
+        not gdf.geometry.iloc[0]
+        .buffer(-1e-9)
+        .intersects(gdf.geometry.iloc[1].buffer(-1e-9))
     )
 
 
@@ -90,13 +92,11 @@ def test_toposmooth_endpoint_pin_on_topology_arcs():
 
 
 def test_toposmooth_growth_bound_chaikin2():
-    zigzag = geometry.LineString(
-        [(i, (i % 2) * 0.5) for i in range(20)]
-    )
+    zigzag = geometry.LineString([(i, (i % 2) * 0.5) for i in range(20)])
     topo = topojson.Topology([zigzag], prequantize=False)
     n0 = sum(len(a) for a in topo.output["arcs"])
     n1 = sum(len(a) for a in topo.toposmooth(iterations=2).output["arcs"])
-    # ~4× for arcs with ≥3 vertices; allow small headroom.
+    # ~4x for arcs with >=3 vertices; allow small headroom.
     assert n1 <= 4 * n0 + 8
     assert n1 > n0
 
