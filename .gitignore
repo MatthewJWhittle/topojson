@@ -114,6 +114,6 @@ topo.code-workspace
 docs.md
 .vscode/settings.json
 
-# Representative benchmark cache and run rows (see benchmarks/README.md)
-benchmarks/cache/
+# Scale-ladder pooch cache and jsonl (tests/bench_scale.py)
+tests/bench_cache/
 

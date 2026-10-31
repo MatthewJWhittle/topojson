@@ -1,12 +1,11 @@
-"""Legacy in-tree sample timings for the CI chart workflow.
+"""In-tree sample timings for the CI chart workflow (benchmark.yml).
 
-For representative public datasets (Natural Earth, Census, TOP10NL, Chesapeake /
-LandCover.ai), size ladders, stage timing, and JSON run rows, use:
+For the public-data size ladder (Natural Earth, Census, TOP10NL, Chesapeake):
 
-    python -m benchmarks download
-    python -m benchmarks run --family long_rings
+    python tests/bench_scale.py download --fast
+    python tests/bench_scale.py run --fast
 
-See benchmarks/README.md.
+See tests/bench_scale.py.
 """
 
 import json

@@ -29,8 +29,9 @@ dev = [
 bench = [
     "geopandas",
     "fiona",
-    "pyogrio",
     "rasterio",
+    "pooch",
+    "fire",
 ]
 docs = [
     "zensical",

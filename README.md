@@ -62,6 +62,18 @@ Further, optional soft dependencies are:
 - `geopandas` - parse your TopoJSON output directly into a GeoDataFrame
 - `ipywidgets` - make your life complete with the interactive experience
 
+## Scale benchmarks
+
+Public-data size ladder (optional; not the CI chart job):
+
+```bash
+pip install -e '.[bench]'
+python tests/bench_scale.py download --fast
+python tests/bench_scale.py run --fast
+```
+
+Rows append to `tests/bench_cache/runs/summary.jsonl`. Full families, TOP10NL, and rasters omit `--fast`. The in-tree chart workflow still uses `tests/benchmark_compute.py`.
+
 ## Other resources
 
 For a better understanding how the different included simplification algorithms work
