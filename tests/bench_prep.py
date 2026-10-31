@@ -102,6 +102,8 @@ TRACT_STATE_GROUPS = {
 }
 
 DEFAULT_CACHE = Path(__file__).resolve().parent / "bench_cache"
+# Datasets doc: time toposimplify at one or two metre tolerances (metre CRS).
+DEFAULT_SIMPLIFY_M = [1.0, 2.0]
 
 
 def cache_dir(path: str | Path | None = None) -> Path:
@@ -392,7 +394,7 @@ def size_steps(raster_source: str = "chesapeake") -> list[dict[str, Any]]:
             "dataset": "tl_2024_11_tabblock20",
             "prep": "fraction",
             "args": {"fraction": 0.25},
-            "simplify_m": [2.0],
+            "simplify_m": list(DEFAULT_SIMPLIFY_M),
         },
         {
             "size_id": "dc_blocks_half",
@@ -401,7 +403,7 @@ def size_steps(raster_source: str = "chesapeake") -> list[dict[str, Any]]:
             "dataset": "tl_2024_11_tabblock20",
             "prep": "fraction",
             "args": {"fraction": 0.5},
-            "simplify_m": [2.0],
+            "simplify_m": list(DEFAULT_SIMPLIFY_M),
         },
         {
             "size_id": "dc_blocks_full",
@@ -409,7 +411,7 @@ def size_steps(raster_source: str = "chesapeake") -> list[dict[str, Any]]:
             "family": "shared_mesh",
             "dataset": "tl_2024_11_tabblock20",
             "prep": "zip",
-            "simplify_m": [2.0],
+            "simplify_m": list(DEFAULT_SIMPLIFY_M),
         },
         {
             "size_id": "counties_20m",
@@ -417,6 +419,7 @@ def size_steps(raster_source: str = "chesapeake") -> list[dict[str, Any]]:
             "family": "shared_mesh",
             "dataset": "cb_2024_us_county_20m",
             "prep": "zip",
+            "simplify_m": list(DEFAULT_SIMPLIFY_M),
         },
         {
             "size_id": "counties_500k",
@@ -424,6 +427,7 @@ def size_steps(raster_source: str = "chesapeake") -> list[dict[str, Any]]:
             "family": "shared_mesh",
             "dataset": "cb_2024_us_county_500k",
             "prep": "zip",
+            "simplify_m": list(DEFAULT_SIMPLIFY_M),
         },
         {
             "size_id": "tracts_states_dc",
@@ -432,6 +436,7 @@ def size_steps(raster_source: str = "chesapeake") -> list[dict[str, Any]]:
             "dataset": "cb_2024_us_tract_500k",
             "prep": "tract_states",
             "args": {"group": "states_dc"},
+            "simplify_m": list(DEFAULT_SIMPLIFY_M),
         },
         {
             "size_id": "tracts_states_midatl",
@@ -440,6 +445,7 @@ def size_steps(raster_source: str = "chesapeake") -> list[dict[str, Any]]:
             "dataset": "cb_2024_us_tract_500k",
             "prep": "tract_states",
             "args": {"group": "states_midatl"},
+            "simplify_m": list(DEFAULT_SIMPLIFY_M),
         },
         {
             "size_id": "tracts_states_northeast",
@@ -448,6 +454,7 @@ def size_steps(raster_source: str = "chesapeake") -> list[dict[str, Any]]:
             "dataset": "cb_2024_us_tract_500k",
             "prep": "tract_states",
             "args": {"group": "states_northeast"},
+            "simplify_m": list(DEFAULT_SIMPLIFY_M),
         },
         {
             "size_id": "top10nl_terrein_bbox_small",
@@ -456,7 +463,7 @@ def size_steps(raster_source: str = "chesapeake") -> list[dict[str, Any]]:
             "dataset": "top10nl_terrein_vlak",
             "prep": "top10nl",
             "args": {"layer": "terrein_vlak", "bbox": "bbox_small"},
-            "simplify_m": [2.0],
+            "simplify_m": list(DEFAULT_SIMPLIFY_M),
         },
         {
             "size_id": "top10nl_terrein_bbox_mid",
@@ -465,7 +472,7 @@ def size_steps(raster_source: str = "chesapeake") -> list[dict[str, Any]]:
             "dataset": "top10nl_terrein_vlak",
             "prep": "top10nl",
             "args": {"layer": "terrein_vlak", "bbox": "bbox_mid"},
-            "simplify_m": [2.0],
+            "simplify_m": list(DEFAULT_SIMPLIFY_M),
         },
         {
             "size_id": "top10nl_terrein_bbox_wide",
@@ -474,7 +481,7 @@ def size_steps(raster_source: str = "chesapeake") -> list[dict[str, Any]]:
             "dataset": "top10nl_terrein_vlak",
             "prep": "top10nl",
             "args": {"layer": "terrein_vlak", "bbox": "bbox_wide"},
-            "simplify_m": [2.0],
+            "simplify_m": list(DEFAULT_SIMPLIFY_M),
         },
         {
             "size_id": "top10nl_gebouw_bbox_wide",
@@ -483,7 +490,7 @@ def size_steps(raster_source: str = "chesapeake") -> list[dict[str, Any]]:
             "dataset": "top10nl_gebouw_vlak",
             "prep": "top10nl",
             "args": {"layer": "gebouw_vlak", "bbox": "bbox_wide"},
-            "simplify_m": [2.0],
+            "simplify_m": list(DEFAULT_SIMPLIFY_M),
         },
     ]
     if raster_source == "landcover_ai":
@@ -505,7 +512,7 @@ def size_steps(raster_source: str = "chesapeake") -> list[dict[str, Any]]:
                     "dataset": "landcover_ai_v1",
                     "prep": "landcover_ai",
                     "args": {"ground_resolution_m": 1.0, "chip_max_side": None},
-                    "simplify_m": [2.0],
+                    "simplify_m": list(DEFAULT_SIMPLIFY_M),
                 },
                 {
                     "size_id": "landcover_ai_tile_2m",
@@ -515,7 +522,7 @@ def size_steps(raster_source: str = "chesapeake") -> list[dict[str, Any]]:
                     "prep": "landcover_ai",
                     "args": {"ground_resolution_m": 2.0, "chip_max_side": None},
                     "skip_pq_false": True,
-                    "simplify_m": [2.0],
+                    "simplify_m": list(DEFAULT_SIMPLIFY_M),
                 },
             ]
         )
@@ -539,7 +546,7 @@ def size_steps(raster_source: str = "chesapeake") -> list[dict[str, Any]]:
                             ),
                         },
                         "skip_pq_false": skip_false or area == "loudoun",
-                        "simplify_m": [2.0],
+                        "simplify_m": list(DEFAULT_SIMPLIFY_M),
                     }
                 )
             steps.append(
@@ -550,7 +557,7 @@ def size_steps(raster_source: str = "chesapeake") -> list[dict[str, Any]]:
                     "dataset": key,
                     "prep": "raster",
                     "args": {"ground_resolution_m": 1.0, "chip_max_side": 1024},
-                    "simplify_m": [2.0],
+                    "simplify_m": list(DEFAULT_SIMPLIFY_M),
                 }
             )
     return steps
