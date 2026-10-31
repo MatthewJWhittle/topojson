@@ -25,6 +25,8 @@ dev = [
     "altair", 
     "ipywidgets",
     "polars",
+    "pooch",
+    "fire",
 ]
 bench = [
     "geopandas",

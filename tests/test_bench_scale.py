@@ -10,7 +10,6 @@ import pytest
 from tests.bench_prep import cumulative_by_vertices, feature_fraction, size_steps
 from tests.bench_scale import FAST_SIZE_IDS, append_jsonl, measure
 
-
 FILES = Path(__file__).resolve().parent / "files_shapefile"
 
 
@@ -25,7 +24,7 @@ def test_size_steps_default_chesapeake():
 
 def test_fast_allowlist_is_subset():
     ids = {s["size_id"] for s in size_steps()}
-    assert FAST_SIZE_IDS <= ids
+    assert ids >= FAST_SIZE_IDS
 
 
 def test_prepare_helpers_on_in_tree_natural_earth():

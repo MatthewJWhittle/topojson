@@ -14,12 +14,11 @@ import cProfile
 import json
 import pstats
 import resource
+import sys
 import time
 import traceback
 from pathlib import Path
 from typing import Any
-
-import sys
 
 import fire
 import geopandas as gpd
@@ -68,7 +67,7 @@ def _arc_vertices(arcs, transform=None) -> int:
     try:
         decoded = arc_coordinates(arcs, transform)
         return int(sum(len(np.asarray(a)) for a in decoded))
-    except Exception:  # noqa: BLE001
+    except Exception:
         return int(sum(len(np.asarray(a)) for a in arcs))
 
 
@@ -104,7 +103,7 @@ def measure(
     simplify_with: str = "shapely",
 ) -> dict[str, Any]:
     """Wall/process/RSS + to_json; optional cProfile stage buckets. No monkeypatch."""
-    n_features = int(len(gdf))
+    n_features = len(gdf)
     from shapely import get_num_coordinates, get_parts
 
     n_parts = n_vertices = 0
@@ -149,7 +148,7 @@ def measure(
             rss_peak_mb=round(_rss_mb(), 3),
         )
         return row
-    except Exception:  # noqa: BLE001
+    except Exception:
         row.update(
             failed=True,
             fail_stage="extract",
@@ -185,7 +184,7 @@ def measure(
         row["t_json_s"] = row["json_wall_s"]
         row["json_bytes"] = len(raw.encode("utf-8"))
         row["rss_after_json_mb"] = round(_rss_mb(), 3)
-    except Exception:  # noqa: BLE001
+    except Exception:
         row.update(failed=True, fail_stage="json", error=traceback.format_exc(limit=3))
         return row
 
@@ -203,7 +202,7 @@ def measure(
                 ),
                 simplify_wall_s=round(s_wall, 6),
             )
-        except Exception:  # noqa: BLE001
+        except Exception:
             row["simplify_error"] = traceback.format_exc(limit=2)
 
     row["smooth"] = SMOOTH
@@ -304,7 +303,7 @@ def run(
         print(f"prepare {step['size_id']} ({step['family']})")
         try:
             gdf, meta = prepare_step(step, dest)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             print(f"  prepare failed: {exc}")
             row = {
                 "family": step["family"],
@@ -318,9 +317,7 @@ def run(
             append_jsonl(row, dest)
             continue
 
-        gdf = reproject_for_metres(
-            gdf, dataset=step["dataset"], family=step["family"]
-        )
+        gdf = reproject_for_metres(gdf, dataset=step["dataset"], family=step["family"])
         print(
             f"  features={meta.get('n_features')} "
             f"vertices={meta.get('n_vertices')} crs={gdf.crs}"

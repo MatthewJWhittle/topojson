@@ -155,7 +155,7 @@ def geometry_stats(gdf: gpd.GeoDataFrame) -> dict[str, Any]:
         n_parts += len(get_parts(geom))
         n_vertices += int(get_num_coordinates(geom))
     return {
-        "n_features": int(len(gdf)),
+        "n_features": len(gdf),
         "n_parts": n_parts,
         "n_vertices": n_vertices,
         "crs": gdf.crs.to_string() if gdf.crs is not None else None,
@@ -198,7 +198,7 @@ def longest_rings_budget(gdf: gpd.GeoDataFrame, budget: int) -> gpd.GeoDataFrame
 
 
 def feature_fraction(gdf: gpd.GeoDataFrame, fraction: float) -> gpd.GeoDataFrame:
-    return gdf.iloc[: max(1, int(round(len(gdf) * fraction)))].copy()
+    return gdf.iloc[: max(1, round(len(gdf) * fraction))].copy()
 
 
 def tract_state_group(gdf: gpd.GeoDataFrame, group: str) -> gpd.GeoDataFrame:
@@ -256,7 +256,7 @@ def polygonize_geotiff(
 
     with rasterio.open(path) as ds:
         native_x = abs(ds.transform.a)
-        factor = max(1, int(round(ground_resolution_m / native_x)))
+        factor = max(1, round(ground_resolution_m / native_x))
         width, height = ds.width, ds.height
         window = None
         if chip_max_side is not None:
@@ -340,183 +340,183 @@ def reproject_for_metres(
 def size_steps(raster_source: str = "chesapeake") -> list[dict[str, Any]]:
     """Compact step table: family / size_id / source / prep / args."""
     steps: list[dict[str, Any]] = [
-        dict(
-            size_id="ne110m_full",
-            source="ne_110m_admin_0_countries",
-            family="long_rings",
-            dataset="ne_110m_admin_0_countries",
-            prep="zip",
-        ),
-        dict(
-            size_id="ne10m_longest_rings_80k",
-            source="ne_10m_admin_0_countries",
-            family="long_rings",
-            dataset="ne_10m_admin_0_countries",
-            prep="longest_rings",
-            args={"budget": 80_000},
-        ),
-        dict(
-            size_id="ne10m_full",
-            source="ne_10m_admin_0_countries",
-            family="long_rings",
-            dataset="ne_10m_admin_0_countries",
-            prep="zip",
-        ),
-        dict(
-            size_id="rivers_20k",
-            source="ne_10m_rivers_lake_centerlines",
-            family="open_lines",
-            dataset="ne_10m_rivers_lake_centerlines",
-            prep="cumulative",
-            args={"budget": 20_000},
-        ),
-        dict(
-            size_id="rivers_80k",
-            source="ne_10m_rivers_lake_centerlines",
-            family="open_lines",
-            dataset="ne_10m_rivers_lake_centerlines",
-            prep="cumulative",
-            args={"budget": 80_000},
-        ),
-        dict(
-            size_id="rivers_full",
-            source="ne_10m_rivers_lake_centerlines",
-            family="open_lines",
-            dataset="ne_10m_rivers_lake_centerlines",
-            prep="zip",
-        ),
-        dict(
-            size_id="dc_blocks_quarter",
-            source="tl_2024_11_tabblock20",
-            family="shared_mesh",
-            dataset="tl_2024_11_tabblock20",
-            prep="fraction",
-            args={"fraction": 0.25},
-            simplify_m=[2.0],
-        ),
-        dict(
-            size_id="dc_blocks_half",
-            source="tl_2024_11_tabblock20",
-            family="shared_mesh",
-            dataset="tl_2024_11_tabblock20",
-            prep="fraction",
-            args={"fraction": 0.5},
-            simplify_m=[2.0],
-        ),
-        dict(
-            size_id="dc_blocks_full",
-            source="tl_2024_11_tabblock20",
-            family="shared_mesh",
-            dataset="tl_2024_11_tabblock20",
-            prep="zip",
-            simplify_m=[2.0],
-        ),
-        dict(
-            size_id="counties_20m",
-            source="cb_2024_us_county_20m",
-            family="shared_mesh",
-            dataset="cb_2024_us_county_20m",
-            prep="zip",
-        ),
-        dict(
-            size_id="counties_500k",
-            source="cb_2024_us_county_500k",
-            family="shared_mesh",
-            dataset="cb_2024_us_county_500k",
-            prep="zip",
-        ),
-        dict(
-            size_id="tracts_states_dc",
-            source="cb_2024_us_tract_500k",
-            family="shared_mesh",
-            dataset="cb_2024_us_tract_500k",
-            prep="tract_states",
-            args={"group": "states_dc"},
-        ),
-        dict(
-            size_id="tracts_states_midatl",
-            source="cb_2024_us_tract_500k",
-            family="shared_mesh",
-            dataset="cb_2024_us_tract_500k",
-            prep="tract_states",
-            args={"group": "states_midatl"},
-        ),
-        dict(
-            size_id="tracts_states_northeast",
-            source="cb_2024_us_tract_500k",
-            family="shared_mesh",
-            dataset="cb_2024_us_tract_500k",
-            prep="tract_states",
-            args={"group": "states_northeast"},
-        ),
-        dict(
-            size_id="top10nl_terrein_bbox_small",
-            source="top10nl",
-            family="shared_landcover",
-            dataset="top10nl_terrein_vlak",
-            prep="top10nl",
-            args={"layer": "terrein_vlak", "bbox": "bbox_small"},
-            simplify_m=[2.0],
-        ),
-        dict(
-            size_id="top10nl_terrein_bbox_mid",
-            source="top10nl",
-            family="shared_landcover",
-            dataset="top10nl_terrein_vlak",
-            prep="top10nl",
-            args={"layer": "terrein_vlak", "bbox": "bbox_mid"},
-            simplify_m=[2.0],
-        ),
-        dict(
-            size_id="top10nl_terrein_bbox_wide",
-            source="top10nl",
-            family="shared_landcover",
-            dataset="top10nl_terrein_vlak",
-            prep="top10nl",
-            args={"layer": "terrein_vlak", "bbox": "bbox_wide"},
-            simplify_m=[2.0],
-        ),
-        dict(
-            size_id="top10nl_gebouw_bbox_wide",
-            source="top10nl",
-            family="shared_landcover",
-            dataset="top10nl_gebouw_vlak",
-            prep="top10nl",
-            args={"layer": "gebouw_vlak", "bbox": "bbox_wide"},
-            simplify_m=[2.0],
-        ),
+        {
+            "size_id": "ne110m_full",
+            "source": "ne_110m_admin_0_countries",
+            "family": "long_rings",
+            "dataset": "ne_110m_admin_0_countries",
+            "prep": "zip",
+        },
+        {
+            "size_id": "ne10m_longest_rings_80k",
+            "source": "ne_10m_admin_0_countries",
+            "family": "long_rings",
+            "dataset": "ne_10m_admin_0_countries",
+            "prep": "longest_rings",
+            "args": {"budget": 80_000},
+        },
+        {
+            "size_id": "ne10m_full",
+            "source": "ne_10m_admin_0_countries",
+            "family": "long_rings",
+            "dataset": "ne_10m_admin_0_countries",
+            "prep": "zip",
+        },
+        {
+            "size_id": "rivers_20k",
+            "source": "ne_10m_rivers_lake_centerlines",
+            "family": "open_lines",
+            "dataset": "ne_10m_rivers_lake_centerlines",
+            "prep": "cumulative",
+            "args": {"budget": 20_000},
+        },
+        {
+            "size_id": "rivers_80k",
+            "source": "ne_10m_rivers_lake_centerlines",
+            "family": "open_lines",
+            "dataset": "ne_10m_rivers_lake_centerlines",
+            "prep": "cumulative",
+            "args": {"budget": 80_000},
+        },
+        {
+            "size_id": "rivers_full",
+            "source": "ne_10m_rivers_lake_centerlines",
+            "family": "open_lines",
+            "dataset": "ne_10m_rivers_lake_centerlines",
+            "prep": "zip",
+        },
+        {
+            "size_id": "dc_blocks_quarter",
+            "source": "tl_2024_11_tabblock20",
+            "family": "shared_mesh",
+            "dataset": "tl_2024_11_tabblock20",
+            "prep": "fraction",
+            "args": {"fraction": 0.25},
+            "simplify_m": [2.0],
+        },
+        {
+            "size_id": "dc_blocks_half",
+            "source": "tl_2024_11_tabblock20",
+            "family": "shared_mesh",
+            "dataset": "tl_2024_11_tabblock20",
+            "prep": "fraction",
+            "args": {"fraction": 0.5},
+            "simplify_m": [2.0],
+        },
+        {
+            "size_id": "dc_blocks_full",
+            "source": "tl_2024_11_tabblock20",
+            "family": "shared_mesh",
+            "dataset": "tl_2024_11_tabblock20",
+            "prep": "zip",
+            "simplify_m": [2.0],
+        },
+        {
+            "size_id": "counties_20m",
+            "source": "cb_2024_us_county_20m",
+            "family": "shared_mesh",
+            "dataset": "cb_2024_us_county_20m",
+            "prep": "zip",
+        },
+        {
+            "size_id": "counties_500k",
+            "source": "cb_2024_us_county_500k",
+            "family": "shared_mesh",
+            "dataset": "cb_2024_us_county_500k",
+            "prep": "zip",
+        },
+        {
+            "size_id": "tracts_states_dc",
+            "source": "cb_2024_us_tract_500k",
+            "family": "shared_mesh",
+            "dataset": "cb_2024_us_tract_500k",
+            "prep": "tract_states",
+            "args": {"group": "states_dc"},
+        },
+        {
+            "size_id": "tracts_states_midatl",
+            "source": "cb_2024_us_tract_500k",
+            "family": "shared_mesh",
+            "dataset": "cb_2024_us_tract_500k",
+            "prep": "tract_states",
+            "args": {"group": "states_midatl"},
+        },
+        {
+            "size_id": "tracts_states_northeast",
+            "source": "cb_2024_us_tract_500k",
+            "family": "shared_mesh",
+            "dataset": "cb_2024_us_tract_500k",
+            "prep": "tract_states",
+            "args": {"group": "states_northeast"},
+        },
+        {
+            "size_id": "top10nl_terrein_bbox_small",
+            "source": "top10nl",
+            "family": "shared_landcover",
+            "dataset": "top10nl_terrein_vlak",
+            "prep": "top10nl",
+            "args": {"layer": "terrein_vlak", "bbox": "bbox_small"},
+            "simplify_m": [2.0],
+        },
+        {
+            "size_id": "top10nl_terrein_bbox_mid",
+            "source": "top10nl",
+            "family": "shared_landcover",
+            "dataset": "top10nl_terrein_vlak",
+            "prep": "top10nl",
+            "args": {"layer": "terrein_vlak", "bbox": "bbox_mid"},
+            "simplify_m": [2.0],
+        },
+        {
+            "size_id": "top10nl_terrein_bbox_wide",
+            "source": "top10nl",
+            "family": "shared_landcover",
+            "dataset": "top10nl_terrein_vlak",
+            "prep": "top10nl",
+            "args": {"layer": "terrein_vlak", "bbox": "bbox_wide"},
+            "simplify_m": [2.0],
+        },
+        {
+            "size_id": "top10nl_gebouw_bbox_wide",
+            "source": "top10nl",
+            "family": "shared_landcover",
+            "dataset": "top10nl_gebouw_vlak",
+            "prep": "top10nl",
+            "args": {"layer": "gebouw_vlak", "bbox": "bbox_wide"},
+            "simplify_m": [2.0],
+        },
     ]
     if raster_source == "landcover_ai":
         steps.extend(
             [
-                dict(
-                    size_id="landcover_ai_chip_native",
-                    source="landcover_ai_v1",
-                    family="raster_landcover",
-                    dataset="landcover_ai_v1",
-                    prep="landcover_ai",
-                    args={"ground_resolution_m": 0.25, "chip_max_side": 1024},
-                    simplify_m=[1.0],
-                ),
-                dict(
-                    size_id="landcover_ai_tile_1m",
-                    source="landcover_ai_v1",
-                    family="raster_landcover",
-                    dataset="landcover_ai_v1",
-                    prep="landcover_ai",
-                    args={"ground_resolution_m": 1.0, "chip_max_side": None},
-                    simplify_m=[2.0],
-                ),
-                dict(
-                    size_id="landcover_ai_tile_2m",
-                    source="landcover_ai_v1",
-                    family="raster_landcover",
-                    dataset="landcover_ai_v1",
-                    prep="landcover_ai",
-                    args={"ground_resolution_m": 2.0, "chip_max_side": None},
-                    skip_pq_false=True,
-                    simplify_m=[2.0],
-                ),
+                {
+                    "size_id": "landcover_ai_chip_native",
+                    "source": "landcover_ai_v1",
+                    "family": "raster_landcover",
+                    "dataset": "landcover_ai_v1",
+                    "prep": "landcover_ai",
+                    "args": {"ground_resolution_m": 0.25, "chip_max_side": 1024},
+                    "simplify_m": [1.0],
+                },
+                {
+                    "size_id": "landcover_ai_tile_1m",
+                    "source": "landcover_ai_v1",
+                    "family": "raster_landcover",
+                    "dataset": "landcover_ai_v1",
+                    "prep": "landcover_ai",
+                    "args": {"ground_resolution_m": 1.0, "chip_max_side": None},
+                    "simplify_m": [2.0],
+                },
+                {
+                    "size_id": "landcover_ai_tile_2m",
+                    "source": "landcover_ai_v1",
+                    "family": "raster_landcover",
+                    "dataset": "landcover_ai_v1",
+                    "prep": "landcover_ai",
+                    "args": {"ground_resolution_m": 2.0, "chip_max_side": None},
+                    "skip_pq_false": True,
+                    "simplify_m": [2.0],
+                },
             ]
         )
     else:
@@ -526,32 +526,32 @@ def size_steps(raster_source: str = "chesapeake") -> list[dict[str, Any]]:
         ):
             for metres, skip_false in ((1.0, False), (2.0, False), (4.0, True)):
                 steps.append(
-                    dict(
-                        size_id=f"chesapeake_{area}_{metres:g}m",
-                        source=key,
-                        family="raster_landcover",
-                        dataset=key,
-                        prep="raster",
-                        args={
+                    {
+                        "size_id": f"chesapeake_{area}_{metres:g}m",
+                        "source": key,
+                        "family": "raster_landcover",
+                        "dataset": key,
+                        "prep": "raster",
+                        "args": {
                             "ground_resolution_m": metres,
                             "chip_max_side": (
                                 None if area == "dc" or metres >= 2 else 4096
                             ),
                         },
-                        skip_pq_false=skip_false or area == "loudoun",
-                        simplify_m=[2.0],
-                    )
+                        "skip_pq_false": skip_false or area == "loudoun",
+                        "simplify_m": [2.0],
+                    }
                 )
             steps.append(
-                dict(
-                    size_id=f"chesapeake_{area}_chip_1m",
-                    source=key,
-                    family="raster_landcover",
-                    dataset=key,
-                    prep="raster",
-                    args={"ground_resolution_m": 1.0, "chip_max_side": 1024},
-                    simplify_m=[2.0],
-                )
+                {
+                    "size_id": f"chesapeake_{area}_chip_1m",
+                    "source": key,
+                    "family": "raster_landcover",
+                    "dataset": key,
+                    "prep": "raster",
+                    "args": {"ground_resolution_m": 1.0, "chip_max_side": 1024},
+                    "simplify_m": [2.0],
+                }
             )
     return steps
 
