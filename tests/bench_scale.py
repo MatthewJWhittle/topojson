@@ -88,7 +88,7 @@ HABITAT_SIZE_IDS = {
 }
 
 SMOOTH = "smooth_not_implemented"
-# Approximate metres→degrees at the equator for geographic CRS tolerances.
+# Approximate metres->degrees at the equator for geographic CRS tolerances.
 _METRES_PER_DEGREE = 111_320.0
 
 
@@ -127,7 +127,7 @@ def _stage_from_profile(profiler: cProfile.Profile, wall_s: float) -> dict[str, 
 
 
 def simplify_epsilon_for_crs(crs, tolerance_m: float) -> float:
-    """Map a metre tolerance into CRS units (degrees ≈ m / 111320 when geographic)."""
+    """Map a metre tolerance into CRS units (degrees ~ m / 111320 when geographic)."""
     if crs is not None and getattr(crs, "is_geographic", False):
         return tolerance_m / _METRES_PER_DEGREE
     return float(tolerance_m)
@@ -136,7 +136,7 @@ def simplify_epsilon_for_crs(crs, tolerance_m: float) -> float:
 def resolve_simplify_tolerances(
     step: dict[str, Any], *, simplify: bool
 ) -> list[float] | None:
-    """Tolerances in metres from the step, or the datasets-doc default (1–2 m)."""
+    """Tolerances in metres from the step, or the datasets-doc default (1-2 m)."""
     if not simplify:
         return None
     raw = step.get("simplify_m")
@@ -189,8 +189,8 @@ def _record_toposimplify(
 ) -> Any:
     """Time toposimplify for each metre tolerance on the same Topology object.
 
-    Primary fields (``simplify_wall_s``, ``n_vertices_simplified``, …) come from
-    the last tolerance (datasets doc uses 1–2 m; steps usually end on 2 m).
+    Primary fields (``simplify_wall_s``, ``n_vertices_simplified``, ...) come from
+    the last tolerance (datasets doc uses 1-2 m; steps usually end on 2 m).
     Extra tolerances land in ``simplify_runs``. Returns the last simplified
     Topology (for the smooth hook) or ``topo`` if every attempt failed.
     """

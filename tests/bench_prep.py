@@ -59,7 +59,7 @@ URLS: dict[str, str] = {
     "landcover_ai_v1": (
         "https://landcover.ai.linuxpolska.com/download/landcover.ai.v1.zip"
     ),
-    # Living England 2022–23 habitat polygons (OGL v3.0). ~1.5 GB GPKG zip.
+    # Living England 2022-23 habitat polygons (OGL v3.0). ~1.5 GB GPKG zip.
     "living_england_2022_2023": (
         "https://s3.eu-west-1.amazonaws.com/data.defra.gov.uk/Natural_England/"
         "Habitat_Species/Habitats/Living_England/Living_England_2022_2023/"
@@ -96,10 +96,10 @@ TOP10NL_BBOXES = {
     "bbox_wide": (5.00, 52.05, 6.02, 52.07),
 }
 # Nested British National Grid (EPSG:27700) boxes over the New Forest habitat
-# mosaic — large enough for ~10 m OBIA segments (MMU 300 m²). Chosen so area
-# grows ~4× per step while staying in one habitat landscape.
+# mosaic - large enough for ~10 m OBIA segments (MMU 300 m2). Chosen so area
+# grows ~4x per step while staying in one habitat landscape.
 # Counts are filled at prepare time; expected order-of-magnitude:
-#   small 8×8 km ≈ 5–15k features; mid 16×16 km; wide 32×32 km.
+#   small 8x8 km ~ 5-15k features; mid 16x16 km; wide 32x32 km.
 LIVING_ENGLAND_BBOXES: dict[str, tuple[float, float, float, float]] = {
     "bbox_small": (439000.0, 104000.0, 447000.0, 112000.0),
     "bbox_mid": (435000.0, 100000.0, 451000.0, 116000.0),
@@ -468,7 +468,7 @@ def _living_england_steps() -> list[dict[str, Any]]:
                 "dataset": "living_england_2022_2023",
                 "prep": "living_england",
                 "args": {"bbox": bbox_id},
-                # Wide (~1k km² / multi-million verts) keeps default grid only.
+                # Wide (~1k km2 / multi-million verts) keeps default grid only.
                 "skip_pq_false": bbox_id == "bbox_wide",
                 "simplify_m": list(DEFAULT_SIMPLIFY_M),
                 "license": "OGL-UK-3.0",
@@ -480,8 +480,8 @@ def _living_england_steps() -> list[dict[str, Any]]:
 def _tampa_ccap_steps() -> list[dict[str, Any]]:
     """Chesapeake-like C-CAP stairs; chip + generalize so Topology can finish."""
     steps: list[dict[str, Any]] = []
-    # Native ~1 m; centre chips grow area while 2–4 m mode-resample keeps
-    # polygonize tractable on the 184k×173k Tampa mosaic.
+    # Native ~1 m; centre chips grow area while 2-4 m mode-resample keeps
+    # polygonize tractable on the 184kx173k Tampa mosaic.
     for metres, chip, skip_false in (
         (2.0, 2048, False),
         (2.0, 4096, False),
