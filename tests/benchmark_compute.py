@@ -1,3 +1,13 @@
+"""In-tree sample timings for the CI chart workflow (benchmark.yml).
+
+For the public-data size ladder (Natural Earth, Census, TOP10NL, Chesapeake):
+
+    python tests/bench_scale.py download --fast
+    python tests/bench_scale.py run --fast
+
+See tests/bench_scale.py.
+"""
+
 import json
 from pathlib import Path
 from time import process_time

@@ -25,6 +25,15 @@ dev = [
     "altair", 
     "ipywidgets",
     "polars",
+    "pooch",
+    "fire",
+]
+bench = [
+    "geopandas",
+    "fiona",
+    "rasterio",
+    "pooch",
+    "fire",
 ]
 docs = [
     "zensical",
