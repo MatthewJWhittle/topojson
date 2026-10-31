@@ -1,3 +1,14 @@
+"""Legacy in-tree sample timings for the CI chart workflow.
+
+For representative public datasets (Natural Earth, Census, TOP10NL, Chesapeake /
+LandCover.ai), size ladders, stage timing, and JSON run rows, use:
+
+    python -m benchmarks download
+    python -m benchmarks run --family long_rings
+
+See benchmarks/README.md.
+"""
+
 import json
 from pathlib import Path
 from time import process_time

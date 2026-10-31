@@ -26,6 +26,12 @@ dev = [
     "ipywidgets",
     "polars",
 ]
+bench = [
+    "geopandas",
+    "fiona",
+    "pyogrio",
+    "rasterio",
+]
 docs = [
     "zensical",
     "mkdocstrings-python",
