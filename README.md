@@ -72,7 +72,14 @@ python tests/bench_scale.py download --fast
 python tests/bench_scale.py run --fast
 ```
 
-Rows append to `tests/bench_cache/runs/summary.jsonl`. Full families, TOP10NL, and rasters omit `--fast`. The in-tree chart workflow still uses `tests/benchmark_compute.py`.
+Habitat stress ladder (Living England 2022–23 OGL vector bboxes + NOAA C-CAP Tampa raster chips):
+
+```bash
+python tests/bench_scale.py download --habitat_only
+python tests/bench_scale.py run --habitat --prequantize=both
+```
+
+Rows append to `tests/bench_cache/runs/summary.jsonl`. Full families, TOP10NL, and rasters omit `--fast`. `--raster_source=tampa_ccap` selects C-CAP instead of Chesapeake. The in-tree chart workflow still uses `tests/benchmark_compute.py`.
 
 ## Other resources
 

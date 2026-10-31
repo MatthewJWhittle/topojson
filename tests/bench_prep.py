@@ -59,6 +59,19 @@ URLS: dict[str, str] = {
     "landcover_ai_v1": (
         "https://landcover.ai.linuxpolska.com/download/landcover.ai.v1.zip"
     ),
+    # Living England 2022–23 habitat polygons (OGL v3.0). ~1.5 GB GPKG zip.
+    "living_england_2022_2023": (
+        "https://s3.eu-west-1.amazonaws.com/data.defra.gov.uk/Natural_England/"
+        "Habitat_Species/Habitats/Living_England/Living_England_2022_2023/"
+        "Living_England_2022_2023_NE_GPKG.zip"
+    ),
+    # NOAA C-CAP High-Res Tampa Bay (public; 5-year ML-training restriction).
+    "tampa_ccap_2021": (
+        "https://coastalimagery.blob.core.windows.net/ccap-landcover/"
+        "CCAP_bulk_download/High_Resolution_Land_Cover/"
+        "Phase_2_Expanded_Categories/Land_Cover_post_2023/"
+        "fl_tampa_2021_ccapv2_hires_landcover_20230512.zip"
+    ),
 }
 
 CORE_KEYS = [
@@ -71,7 +84,8 @@ CORE_KEYS = [
     "cb_2024_us_tract_500k",
 ]
 CHESAPEAKE_KEYS = ["wash_11001_lulc_2021", "loud_51107_lulc_2021"]
-RASTER_KEYS = set(CHESAPEAKE_KEYS) | {"landcover_ai_v1"}
+RASTER_KEYS = set(CHESAPEAKE_KEYS) | {"landcover_ai_v1", "tampa_ccap_2021"}
+HABITAT_VECTOR_KEYS = ["living_england_2022_2023"]
 
 TOP10NL_API = (
     "https://api.pdok.nl/kadaster/brt-top10nl/ogc/v1/collections/{layer}/items"
@@ -81,6 +95,17 @@ TOP10NL_BBOXES = {
     "bbox_mid": (5.20, 52.05, 5.80, 52.07),
     "bbox_wide": (5.00, 52.05, 6.02, 52.07),
 }
+# Nested British National Grid (EPSG:27700) boxes over the New Forest habitat
+# mosaic — large enough for ~10 m OBIA segments (MMU 300 m²). Chosen so area
+# grows ~4× per step while staying in one habitat landscape.
+# Counts are filled at prepare time; expected order-of-magnitude:
+#   small 8×8 km ≈ 5–15k features; mid 16×16 km; wide 32×32 km.
+LIVING_ENGLAND_BBOXES: dict[str, tuple[float, float, float, float]] = {
+    "bbox_small": (439000.0, 104000.0, 447000.0, 112000.0),
+    "bbox_mid": (435000.0, 100000.0, 451000.0, 116000.0),
+    "bbox_wide": (427000.0, 92000.0, 459000.0, 124000.0),
+}
+LIVING_ENGLAND_CRS = "EPSG:27700"
 TRACT_STATE_GROUPS = {
     "states_dc": ["11"],
     "states_midatl": ["11", "10", "24", "51"],
@@ -117,15 +142,27 @@ def retrieve(key: str, dest: Path) -> Path:
     """Fetch one URL into dest via pooch (hash skipped; public evolving files)."""
     url = URLS[key]
     fname = url.rsplit("/", 1)[-1]
-    path = Path(
-        pooch.retrieve(
-            url=url,
-            known_hash=None,
-            fname=fname,
-            path=dest,
-            progressbar=True,
+    try:
+        path = Path(
+            pooch.retrieve(
+                url=url,
+                known_hash=None,
+                fname=fname,
+                path=dest,
+                progressbar=True,
+            )
         )
-    )
+    except ValueError:
+        # tqdm optional; fall back without a progress bar
+        path = Path(
+            pooch.retrieve(
+                url=url,
+                known_hash=None,
+                fname=fname,
+                path=dest,
+                progressbar=False,
+            )
+        )
     if key in RASTER_KEYS and path.suffix.lower() in {".tif", ".tiff"}:
         return path
     if path.suffix.lower() == ".zip":
@@ -328,15 +365,151 @@ def first_landcover_ai_mask(dest: Path) -> Path:
     return candidates[0]
 
 
+def living_england_gpkg(dest: Path) -> Path:
+    """Download Living England GPKG zip and return the .gpkg path."""
+    extract = dest / "living_england_2022_2023"
+    if not extract.exists():
+        retrieve("living_england_2022_2023", dest)
+    matches = sorted(extract.rglob("*.gpkg"))
+    if not matches:
+        raise FileNotFoundError(f"No GeoPackage under {extract}")
+    return matches[0]
+
+
+def _living_england_layers(gpkg: Path) -> list[str]:
+    """BGZ layer names inside the Living England GeoPackage."""
+    import pyogrio
+
+    rows = pyogrio.list_layers(gpkg)
+    return [str(name) for name, _geom in rows]
+
+
+def fetch_living_england(dest: Path, bbox_id: str) -> Path:
+    """Clip Living England to a nested BNG bbox; cache one GPKG per bbox_id.
+
+    The national release is split into BGZ layers; this unions every layer that
+    intersects the bbox (bbox filter per layer, then clip).
+    """
+    if bbox_id not in LIVING_ENGLAND_BBOXES:
+        raise KeyError(f"Unknown Living England bbox {bbox_id}")
+    out = dest / f"living_england_{bbox_id}.gpkg"
+    if out.exists():
+        return out
+    gpkg = living_england_gpkg(dest)
+    bbox = LIVING_ENGLAND_BBOXES[bbox_id]
+    frames: list[gpd.GeoDataFrame] = []
+    for layer in _living_england_layers(gpkg):
+        part = gpd.read_file(gpkg, layer=layer, bbox=bbox)
+        if len(part):
+            frames.append(part)
+    if frames:
+        gdf = gpd.GeoDataFrame(pd.concat(frames, ignore_index=True), crs=frames[0].crs)
+    else:
+        gdf = gpd.GeoDataFrame(geometry=[], crs=LIVING_ENGLAND_CRS)
+    if gdf.crs is None:
+        gdf = gdf.set_crs(LIVING_ENGLAND_CRS)
+    elif gdf.crs.to_string() != LIVING_ENGLAND_CRS:
+        gdf = gdf.to_crs(LIVING_ENGLAND_CRS)
+    clip_poly = shapely.geometry.box(*bbox)
+    if len(gdf):
+        gdf = gdf.clip(clip_poly)
+        gdf = gdf[~gdf.geometry.is_empty & gdf.geometry.notna()].copy()
+    gdf.to_file(out, layer="living_england", driver="GPKG")
+    return out
+
+
+def tampa_ccap_geotiff(dest: Path) -> Path:
+    """Download Tampa C-CAP zip, unzip, return the land-cover GeoTIFF."""
+    extract = dest / "tampa_ccap_2021"
+    if not extract.exists():
+        retrieve("tampa_ccap_2021", dest)
+    tifs = sorted(extract.rglob("*.tif")) + sorted(extract.rglob("*.tiff"))
+    if not tifs:
+        raise FileNotFoundError(f"No GeoTIFF under {extract}")
+    preferred = [
+        p
+        for p in tifs
+        if "landcover" in p.name.lower() or "land_cover" in p.name.lower()
+    ]
+    return (preferred or tifs)[0]
+
+
 def reproject_for_metres(
     gdf: gpd.GeoDataFrame, *, dataset: str, family: str
 ) -> gpd.GeoDataFrame:
     if gdf.crs is None or gdf.crs.is_projected:
         return gdf
-    us = ("tl_", "cb_", "wash_", "loud_", "tabblock", "county", "tract", "chesapeake")
+    us = (
+        "tl_",
+        "cb_",
+        "wash_",
+        "loud_",
+        "tabblock",
+        "county",
+        "tract",
+        "chesapeake",
+        "tampa",
+        "ccap",
+    )
     if family in {"shared_mesh", "raster_landcover"} or any(m in dataset for m in us):
         return gdf.to_crs("EPSG:5070")
     return gdf
+
+
+def _living_england_steps() -> list[dict[str, Any]]:
+    """Shared-border UK habitat mesh (OGL); nested New Forest BNG bboxes."""
+    steps = []
+    for bbox_id in ("bbox_small", "bbox_mid", "bbox_wide"):
+        steps.append(
+            {
+                "size_id": f"living_england_{bbox_id}",
+                "source": "living_england_2022_2023",
+                "family": "shared_landcover",
+                "dataset": "living_england_2022_2023",
+                "prep": "living_england",
+                "args": {"bbox": bbox_id},
+                # Wide (~1k km² / multi-million verts) keeps default grid only.
+                "skip_pq_false": bbox_id == "bbox_wide",
+                "simplify_m": list(DEFAULT_SIMPLIFY_M),
+                "license": "OGL-UK-3.0",
+            }
+        )
+    return steps
+
+
+def _tampa_ccap_steps() -> list[dict[str, Any]]:
+    """Chesapeake-like C-CAP stairs; chip + generalize so Topology can finish."""
+    steps: list[dict[str, Any]] = []
+    # Native ~1 m; centre chips grow area while 2–4 m mode-resample keeps
+    # polygonize tractable on the 184k×173k Tampa mosaic.
+    for metres, chip, skip_false in (
+        (2.0, 2048, False),
+        (2.0, 4096, False),
+        (4.0, 4096, True),
+        (4.0, 8192, True),
+    ):
+        chip_tag = f"chip{chip}"
+        steps.append(
+            {
+                "size_id": f"tampa_ccap_{chip_tag}_{metres:g}m",
+                "source": "tampa_ccap_2021",
+                "family": "raster_landcover",
+                "dataset": "tampa_ccap_2021",
+                "prep": "tampa_ccap",
+                "args": {
+                    "ground_resolution_m": metres,
+                    "chip_max_side": chip,
+                },
+                "skip_pq_false": skip_false,
+                "simplify_m": list(DEFAULT_SIMPLIFY_M),
+                "license": "NOAA-C-CAP-public",
+                "license_note": (
+                    "Public download; may not train/validate ML for five years "
+                    "from creation. Topology/simplify benchmarking is not ML."
+                ),
+            }
+        )
+    return steps
 
 
 def size_steps(raster_source: str = "chesapeake") -> list[dict[str, Any]]:
@@ -493,6 +666,7 @@ def size_steps(raster_source: str = "chesapeake") -> list[dict[str, Any]]:
             "simplify_m": list(DEFAULT_SIMPLIFY_M),
         },
     ]
+    steps.extend(_living_england_steps())
     if raster_source == "landcover_ai":
         steps.extend(
             [
@@ -526,6 +700,8 @@ def size_steps(raster_source: str = "chesapeake") -> list[dict[str, Any]]:
                 },
             ]
         )
+    elif raster_source == "tampa_ccap":
+        steps.extend(_tampa_ccap_steps())
     else:
         for key, area in (
             ("wash_11001_lulc_2021", "dc"),
@@ -594,6 +770,12 @@ def prepare_step(
     elif prep == "top10nl":
         path = fetch_top10nl(dest, args["layer"], args["bbox"])
         gdf = gpd.read_file(path, layer=args["layer"])
+    elif prep == "living_england":
+        path = fetch_living_england(dest, str(args["bbox"]))
+        gdf = gpd.read_file(path, layer="living_england")
+        extra["bbox"] = args["bbox"]
+        extra["bbox_27700"] = list(LIVING_ENGLAND_BBOXES[str(args["bbox"])])
+        extra["license"] = step.get("license", "OGL-UK-3.0")
     elif prep == "raster":
         path = retrieve(step["source"], dest)
         gdf, raster_meta = polygonize_geotiff(
@@ -602,6 +784,18 @@ def prepare_step(
             chip_max_side=args.get("chip_max_side"),
         )
         extra.update(raster_meta)
+        return gdf, {**extra, **geometry_stats(gdf)}
+    elif prep == "tampa_ccap":
+        path = tampa_ccap_geotiff(dest)
+        gdf, raster_meta = polygonize_geotiff(
+            path,
+            ground_resolution_m=float(args["ground_resolution_m"]),
+            chip_max_side=args.get("chip_max_side"),
+        )
+        extra.update(raster_meta)
+        extra["license"] = step.get("license", "NOAA-C-CAP-public")
+        if step.get("license_note"):
+            extra["license_note"] = step["license_note"]
         return gdf, {**extra, **geometry_stats(gdf)}
     elif prep == "landcover_ai":
         path = first_landcover_ai_mask(dest)

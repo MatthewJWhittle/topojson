@@ -41,12 +41,16 @@ from bench_prep import (  # noqa: E402
     CHESAPEAKE_KEYS,
     CORE_KEYS,
     DEFAULT_SIMPLIFY_M,
+    HABITAT_VECTOR_KEYS,
+    LIVING_ENGLAND_BBOXES,
     cache_dir,
+    fetch_living_england,
     fetch_top10nl,
     prepare_step,
     reproject_for_metres,
     retrieve,
     size_steps,
+    tampa_ccap_geotiff,
 )
 
 # PR / cloud-agent allowlist (see Project docs/bench-ci-loop.md).
@@ -70,6 +74,17 @@ MEDIUM_SUBSET_SIZE_IDS = {
     "rivers_full",
     "ne10m_full",
     "chesapeake_dc_chip_1m",
+}
+
+# Living England nested bboxes + Tampa C-CAP chips (habitat stress ladder).
+HABITAT_SIZE_IDS = {
+    "living_england_bbox_small",
+    "living_england_bbox_mid",
+    "living_england_bbox_wide",
+    "tampa_ccap_chip2048_2m",
+    "tampa_ccap_chip4096_2m",
+    "tampa_ccap_chip4096_4m",
+    "tampa_ccap_chip8192_4m",
 }
 
 SMOOTH = "smooth_not_implemented"
@@ -362,9 +377,21 @@ def download(
     skip_tracts: bool = False,
     skip_rasters: bool = False,
     skip_top10nl: bool = False,
+    skip_habitat: bool = False,
+    habitat_only: bool = False,
 ) -> None:
     """Fetch datasets into the pooch cache. --fast: small zips only."""
     dest = cache_dir(cache)
+    if habitat_only:
+        print("pooch living_england_2022_2023 (OGL)")
+        retrieve("living_england_2022_2023", dest)
+        for bbox in LIVING_ENGLAND_BBOXES:
+            print(f"Living England clip {bbox}")
+            fetch_living_england(dest, bbox)
+        print("pooch tampa_ccap_2021 (unzip GeoTIFF)")
+        tampa_ccap_geotiff(dest)
+        print(f"habitat cache ready under {dest}")
+        return
     keys = list(CORE_KEYS)
     if fast or skip_tracts:
         keys = [k for k in keys if k != "cb_2024_us_tract_500k"]
@@ -373,6 +400,7 @@ def download(
         keys = [k for k in keys if k != "cb_2024_us_county_500k"]
         skip_rasters = True
         skip_top10nl = True
+        skip_habitat = True
     for key in keys:
         print(f"pooch {key}")
         retrieve(key, dest)
@@ -380,6 +408,9 @@ def download(
         if raster_source == "landcover_ai":
             print("pooch landcover_ai_v1")
             retrieve("landcover_ai_v1", dest)
+        elif raster_source == "tampa_ccap":
+            print("pooch tampa_ccap_2021")
+            tampa_ccap_geotiff(dest)
         else:
             for key in CHESAPEAKE_KEYS:
                 print(f"pooch {key}")
@@ -390,6 +421,13 @@ def download(
             fetch_top10nl(dest, "terrein_vlak", bbox)
         print("PDOK gebouw_vlak bbox_wide")
         fetch_top10nl(dest, "gebouw_vlak", "bbox_wide")
+    if not skip_habitat:
+        for key in HABITAT_VECTOR_KEYS:
+            print(f"pooch {key}")
+            retrieve(key, dest)
+        for bbox in LIVING_ENGLAND_BBOXES:
+            print(f"Living England clip {bbox}")
+            fetch_living_england(dest, bbox)
     print(f"cache ready under {dest}")
 
 
@@ -397,6 +435,7 @@ def run(
     cache: str | None = None,
     fast: bool = False,
     medium_subset: bool = False,
+    habitat: bool = False,
     family: str | None = None,
     size_id: str | None = None,
     prequantize: str = "both",
@@ -412,9 +451,12 @@ def run(
     ``--simplify`` / ``--smooth`` default on for fast and medium profiles so
     every successful Topology row also records simplify (and the smooth hook).
     Pass ``--nosimplify`` / ``--nosmooth`` to skip. ``--medium_subset`` selects
-    the representative medium size_ids beside ``--fast``.
+    the representative medium size_ids beside ``--fast``. ``--habitat`` runs
+    Living England nested bboxes + Tampa C-CAP chips (sets raster_source).
     """
     dest = cache_dir(cache)
+    if habitat:
+        raster_source = "tampa_ccap"
     if download_first:
         download(
             cache=str(dest),
@@ -423,10 +465,14 @@ def run(
             skip_tracts=fast,
             skip_rasters=fast,
             skip_top10nl=fast,
+            skip_habitat=fast and not habitat,
+            habitat_only=habitat,
         )
 
     steps = size_steps(raster_source=raster_source)
-    if fast and medium_subset:
+    if habitat:
+        steps = [s for s in steps if s["size_id"] in HABITAT_SIZE_IDS]
+    elif fast and medium_subset:
         allow = FAST_SIZE_IDS | MEDIUM_SUBSET_SIZE_IDS
         steps = [s for s in steps if s["size_id"] in allow]
     elif fast:

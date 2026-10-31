@@ -11,12 +11,14 @@ import pytest
 
 from tests.bench_prep import (
     DEFAULT_SIMPLIFY_M,
+    LIVING_ENGLAND_BBOXES,
     cumulative_by_vertices,
     feature_fraction,
     size_steps,
 )
 from tests.bench_scale import (
     FAST_SIZE_IDS,
+    HABITAT_SIZE_IDS,
     MEDIUM_SUBSET_SIZE_IDS,
     append_jsonl,
     measure,
@@ -33,14 +35,25 @@ def test_size_steps_default_chesapeake():
     assert any(s["family"] == "raster_landcover" for s in steps)
     assert all("landcover_ai" not in s["size_id"] for s in steps)
     assert any("chesapeake" in s["size_id"] for s in steps)
+    assert any(s["size_id"].startswith("living_england_") for s in steps)
     ai = size_steps(raster_source="landcover_ai")
     assert any("landcover_ai" in s["size_id"] for s in ai)
+    tampa = size_steps(raster_source="tampa_ccap")
+    assert any(s["size_id"].startswith("tampa_ccap_") for s in tampa)
+    assert all("chesapeake" not in s["size_id"] for s in tampa)
 
 
 def test_fast_allowlist_is_subset():
     ids = {s["size_id"] for s in size_steps()}
     assert ids >= FAST_SIZE_IDS
     assert ids >= MEDIUM_SUBSET_SIZE_IDS
+    habitat_ids = {s["size_id"] for s in size_steps(raster_source="tampa_ccap")}
+    assert habitat_ids >= HABITAT_SIZE_IDS
+    assert set(LIVING_ENGLAND_BBOXES) == {
+        "bbox_small",
+        "bbox_mid",
+        "bbox_wide",
+    }
 
 
 def test_default_simplify_tolerances():
