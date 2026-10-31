@@ -755,6 +755,7 @@ class Topology(Hashmap):
         *,
         iterations: int = 2,
         samples: int = 6,
+        segment_length: float | None = None,
         inplace: Literal[False] = False,
     ) -> Self: ...
 
@@ -765,6 +766,7 @@ class Topology(Hashmap):
         *,
         iterations: int = 2,
         samples: int = 6,
+        segment_length: float | None = None,
         inplace: Literal[True],
     ) -> None: ...
 
@@ -774,6 +776,7 @@ class Topology(Hashmap):
         *,
         iterations: int = 2,
         samples: int = 6,
+        segment_length: float | None = None,
         inplace: bool = False,
     ) -> Self | None:
         """
@@ -783,9 +786,11 @@ class Topology(Hashmap):
 
         Default is Chaikin corner-cutting (two iterations). Catmull-Rom is the
         alternate interpolating spline (passes through the simplified vertices).
-        Smoothed arcs are stored as floats; the construction-grid `transform` is
-        dropped so re-quantization does not stair-step the curve. Optional fine
-        `topoquantize` remains available at export.
+        Optional ``segment_length`` densifies arcs first so the Chaikin cut radius
+        tracks a chosen ground length (Smoothify-style), without dissolving the
+        mesh. Smoothed arcs are stored as floats; the construction-grid
+        `transform` is dropped so re-quantization does not stair-step the curve.
+        Optional fine `topoquantize` remains available at export.
 
         Parameters
         ----------
@@ -797,6 +802,10 @@ class Topology(Hashmap):
         samples : int, optional
             Catmull-Rom points inserted per segment between control vertices.
             Default is `6`. Ignored for Chaikin.
+        segment_length : float, optional
+            If set, densify each arc so no edge exceeds this length (same units as
+            the coordinates) before smoothing. Endpoints stay fixed. Default is
+            `None` (no densify).
         inplace : bool, optional
             If `True`, do operation inplace and return `None`.
             Default is `False`.
@@ -822,6 +831,10 @@ class Topology(Hashmap):
                 raise ValueError(f"samples must be an int, got: {samples!r}")
             if samples < 0:
                 raise ValueError(f"samples must be >= 0, got: {samples}")
+        if segment_length is not None and segment_length <= 0:
+            raise ValueError(
+                f"segment_length must be > 0 when set, got: {segment_length!r}"
+            )
 
         result = self._copy()
         result.options.toposmooth = method
@@ -833,6 +846,7 @@ class Topology(Hashmap):
                 method=method,
                 iterations=iterations,
                 samples=samples,
+                segment_length=segment_length,
             )
             # Do not re-quantize onto the construction grid (would stair-step curves).
             result.output.pop("transform", None)

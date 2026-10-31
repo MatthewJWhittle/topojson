@@ -1427,6 +1427,52 @@ def simplify_coverage(linestrings, polygons, epsilon, exterior_cw=None):
     return linestrings
 
 
+def segmentize(xy, max_segment_length):
+    """
+    Densify an open polyline so no edge is longer than ``max_segment_length``.
+
+    Endpoints stay fixed. Used before Chaikin so the corner-cutting radius tracks a
+    chosen ground length (Smoothify-style ``segment_length``), without dissolving
+    shared borders. Arcs already shorter than the cap are unchanged.
+
+    Parameters
+    ----------
+    xy : array-like of shape (n, 2)
+        Arc coordinates in float space
+    max_segment_length : float
+        Maximum edge length in the same units as ``xy`` (must be > 0)
+
+    Returns
+    -------
+    numpy.ndarray
+        Densified (m, 2) coordinates; ``xy[0]`` and ``xy[-1]`` unchanged
+    """
+    pts = np.asarray(xy, dtype=np.float64)
+    if pts.ndim != 2 or pts.shape[1] != 2:
+        raise ValueError(f"expected (n, 2) coordinates, got shape {pts.shape}")
+    if max_segment_length <= 0:
+        raise ValueError(f"max_segment_length must be > 0, got: {max_segment_length!r}")
+    if len(pts) < 2:
+        return pts.copy()
+
+    out = [pts[0]]
+    for i in range(len(pts) - 1):
+        p0 = pts[i]
+        p1 = pts[i + 1]
+        dist = float(np.linalg.norm(p1 - p0))
+        if dist <= max_segment_length or dist == 0.0:
+            out.append(p1)
+            continue
+        n = int(np.ceil(dist / max_segment_length))
+        for k in range(1, n):
+            out.append(p0 + (p1 - p0) * (k / n))
+        out.append(p1)
+    result = np.asarray(out, dtype=np.float64)
+    result[0] = pts[0]
+    result[-1] = pts[-1]
+    return result
+
+
 def chaikin(xy, iterations=2):
     """
     Chaikin corner-cutting on an open polyline with endpoints fixed (Chaikin 1974).
@@ -1455,7 +1501,7 @@ def chaikin(xy, iterations=2):
         return pts.copy()
     for _ in range(iterations):
         n = len(pts)
-        # [P0] + (Q, R) per segment + [Pn] → 2n points; ends pinned to originals.
+        # [P0] + (Q, R) per segment + [Pn] -> 2n points; ends pinned to originals.
         out = np.empty((2 * n, 2), dtype=np.float64)
         p0 = pts[:-1]
         p1 = pts[1:]
@@ -1547,7 +1593,7 @@ def catmull_rom(xy, samples=6, alpha=0.5):
     return result
 
 
-def smooth_arcs(arcs, method="chaikin", iterations=2, samples=6):
+def smooth_arcs(arcs, method="chaikin", iterations=2, samples=6, segment_length=None):
     """
     Smooth each decoded float arc in place-style, returning new coordinate lists.
 
@@ -1561,19 +1607,29 @@ def smooth_arcs(arcs, method="chaikin", iterations=2, samples=6):
         Chaikin passes (ignored for Catmull-Rom)
     samples : int
         Catmull-Rom points inserted per segment (ignored for Chaikin)
+    segment_length : float, optional
+        If set, densify each arc so no edge exceeds this length before smoothing
+        (Smoothify-style controlled Chaikin radius). Endpoints stay fixed.
 
     Returns
     -------
     list of list
         Smoothed arcs as nested Python lists (TopoJSON float arcs)
     """
-    if method == "chaikin":
-        return [chaikin(a, iterations=iterations).tolist() for a in arcs]
-    if method == "catmull_rom":
-        return [catmull_rom(a, samples=samples).tolist() for a in arcs]
-    raise ValueError(
-        f"unknown smooth method {method!r}; choose 'chaikin' or 'catmull_rom'"
-    )
+    if method not in ("chaikin", "catmull_rom"):
+        raise ValueError(
+            f"unknown smooth method {method!r}; choose 'chaikin' or 'catmull_rom'"
+        )
+    out = []
+    for arc in arcs:
+        xy = np.asarray(arc, dtype=np.float64)
+        if segment_length is not None:
+            xy = segmentize(xy, segment_length)
+        if method == "chaikin":
+            out.append(chaikin(xy, iterations=iterations).tolist())
+        else:
+            out.append(catmull_rom(xy, samples=samples).tolist())
+    return out
 
 
 def restore_collapsed_rings(arcs, original, rings):

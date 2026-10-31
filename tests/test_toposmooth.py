@@ -32,6 +32,33 @@ def test_chaikin_two_point_arc_unchanged():
     np.testing.assert_array_equal(out, xy)
 
 
+def test_segmentize_caps_edge_length_and_pins_ends():
+    from topojson.ops import segmentize
+
+    xy = np.array([[0.0, 0.0], [10.0, 0.0]])
+    out = segmentize(xy, 2.5)
+    assert len(out) == 5  # 0, 2.5, 5, 7.5, 10
+    np.testing.assert_allclose(out[0], xy[0])
+    np.testing.assert_allclose(out[-1], xy[-1])
+    step = np.linalg.norm(np.diff(out, axis=0), axis=1)
+    assert step.max() <= 2.5 + 1e-9
+
+
+def test_toposmooth_segment_length_densifies_before_chaikin():
+    zigzag = geometry.LineString([(0, 0), (10, 0), (20, 1), (30, 0)])
+    topo = topojson.Topology([zigzag], prequantize=False)
+    plain = topo.toposmooth(iterations=2)
+    densified = topo.toposmooth(iterations=2, segment_length=2.0)
+    n_plain = sum(len(a) for a in plain.output["arcs"])
+    n_dense = sum(len(a) for a in densified.output["arcs"])
+    assert n_dense > n_plain
+    # Ends of the single open arc stay pinned.
+    before = np.asarray(topo.output["arcs"][0], dtype=float)
+    after = np.asarray(densified.output["arcs"][0], dtype=float)
+    np.testing.assert_allclose(after[0], before[0])
+    np.testing.assert_allclose(after[-1], before[-1])
+
+
 def test_catmull_rom_passes_through_controls():
     xy = np.array([[0.0, 0.0], [1.0, 1.0], [2.0, 0.0], [3.0, 0.5]])
     out = catmull_rom(xy, samples=4)
@@ -118,6 +145,8 @@ def test_toposmooth_invalid_method_and_caps():
         topo.toposmooth(iterations=6)
     with pytest.raises(ValueError, match="samples"):
         topo.toposmooth("catmull_rom", samples=-1)
+    with pytest.raises(ValueError, match="segment_length"):
+        topo.toposmooth(segment_length=0)
 
 
 def test_toposmooth_inplace_and_incremental_refused():
