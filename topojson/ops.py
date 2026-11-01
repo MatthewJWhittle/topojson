@@ -238,6 +238,38 @@ def shared_path_ends(pairs):
     return {xy for path in paths for xy in (path.coords[0], path.coords[-1])}
 
 
+def _coordinates_index(lines):
+    """Packed ``(V, 2)`` coordinates and per-vertex line index for geom or array arcs."""
+    if not len(lines):
+        return np.empty((0, 2), dtype=np.float64), np.empty(0, dtype=np.intp)
+    if hasattr(lines[0], "coords"):
+        return shapely.get_coordinates(lines, return_index=True)
+    arrays = [np.asarray(ls, dtype=np.float64).reshape(-1, 2) for ls in lines]
+    xy = np.concatenate(arrays) if arrays else np.empty((0, 2), dtype=np.float64)
+    li = np.repeat(np.arange(len(arrays), dtype=np.intp), [len(a) for a in arrays])
+    return xy, li
+
+
+def _as_linestring_list(lines):
+    """Ensure a list of Shapely LineStrings (batch-build from coordinate arrays)."""
+    if not len(lines) or hasattr(lines[0], "coords"):
+        return lines
+    xy, li = _coordinates_index(lines)
+    if len(xy) == 0:
+        return [geometry.LineString() for _ in lines]
+    # linestrings() needs ≥2 vertices per part; fall back per-arc when any are short.
+    counts = np.bincount(li, minlength=len(lines))
+    if int(counts.min()) >= 2:
+        return list(shapely.linestrings(xy, indices=li))
+    out = []
+    for i, n in enumerate(counts.tolist()):
+        if n < 2:
+            out.append(geometry.LineString())
+        else:
+            out.append(geometry.LineString(np.asarray(lines[i], dtype=float)))
+    return out
+
+
 def shared_path_ends_on_grid(linestrings):
     """
     Junctions of quantized lines: the start and end points of the paths that each
@@ -255,7 +287,7 @@ def shared_path_ends_on_grid(linestrings):
 
     Parameters
     ----------
-    linestrings : list of LineString
+    linestrings : list of LineString or (n, 2) arrays
         Lines with integer coordinates; a closed line continues from its end into
         its start
 
@@ -266,7 +298,7 @@ def shared_path_ends_on_grid(linestrings):
     """
     if len(linestrings) == 0:
         return set()
-    xy, li = shapely.get_coordinates(linestrings, return_index=True)
+    xy, li = _coordinates_index(linestrings)
     xy = xy.astype(np.int64)
     s, h, vertex = _grid_segments(xy, li)
     at, pts = _t_vertices(xy, li, s, h)
@@ -275,9 +307,24 @@ def shared_path_ends_on_grid(linestrings):
         xy = np.insert(xy, at[o] + 1, pts[o], axis=0)
         li = np.insert(li, at[o] + 1, li[at[o]])
         s, h, vertex = _grid_segments(xy, li)
-    closed = shapely.is_closed(np.asarray(linestrings, dtype=object))
+    if hasattr(linestrings[0], "coords"):
+        closed = shapely.is_closed(np.asarray(linestrings, dtype=object))
+    else:
+        closed = np.fromiter(
+            (
+                len(a) > 2
+                and bool(np.array_equal(np.asarray(a[0]), np.asarray(a[-1])))
+                for a in linestrings
+            ),
+            dtype=bool,
+            count=len(linestrings),
+        )
     points, pairs = _junction_vertices(xy, li, s, h, vertex, closed)
-    ends = shared_path_ends([(linestrings[i], linestrings[j]) for i, j in pairs])
+    if len(pairs):
+        geoms = _as_linestring_list(linestrings)
+        ends = shared_path_ends([(geoms[i], geoms[j]) for i, j in pairs])
+    else:
+        ends = set()
     return ends | set(map(tuple, points.tolist()))
 
 
@@ -480,7 +527,7 @@ def cut_lines_on_grid(linestrings, junctions, is_ring):
 
     Parameters
     ----------
-    linestrings : list of LineString
+    linestrings : list of LineString or (n, 2) arrays
         Lines with integer coordinates
     junctions : list of Point
         Junctions with integer coordinates
@@ -494,7 +541,8 @@ def cut_lines_on_grid(linestrings, junctions, is_ring):
     numpy.ndarray
         Number of parts of each line
     """
-    lines = np.asarray(linestrings, dtype=object)
+    # STRtree query needs geometries; batch-build once if we were given arrays.
+    lines = np.asarray(_as_linestring_list(linestrings), dtype=object)
     junctions = np.asarray(junctions, dtype=object)
     xy, li = shapely.get_coordinates(lines, return_index=True)
     jxy = shapely.get_coordinates(junctions)
@@ -1090,13 +1138,12 @@ def quantize(linestrings, bbox, quant_factor=1e5, transform=None):
         counts = np.array([len(line) for line in lines])
         coords, idx = np.concatenate(lines), np.repeat(np.arange(n), counts)
 
-    if not is_geom:
-        linestrings = [line.tolist() for line in lines]
-    elif counts.min() > 1:
-        linestrings = list(shapely.linestrings(coords, indices=idx))
-    else:
-        linestrings = [geometry.LineString(line) for line in lines]
-    return linestrings, transform_
+    # Geom input → LineStrings (historical API / ops tests). Array input (Extract
+    # rings, point coordinates) stays as arrays; Join batch-builds LineStrings.
+    out = list(lines)
+    if is_geom:
+        out = _as_linestring_list(out)
+    return out, transform_
 
 
 def simplify(

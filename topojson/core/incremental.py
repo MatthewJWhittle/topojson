@@ -16,6 +16,7 @@ from shapely import geometry
 from shapely.strtree import STRtree
 
 from ..ops import (
+    _as_linestring_list,
     bounds,
     compare_bounds,
     cut_line,
@@ -414,7 +415,8 @@ def add_features(output, arcs, extracted, object_name):
             for b in o["arcs"]:
                 is_ring[extracted["bookkeeping_geoms"][b]] = True
     lines, _ = quantize(list(extracted["linestrings"]), None, transform=transform)
-    lines = np.asarray(lines, dtype=object)
+    # quantize returns coordinate arrays; STRtree / shared_paths need geometries.
+    lines = np.asarray(_as_linestring_list(lines), dtype=object)
 
     # cut existing arcs at the new junctions
     new_junctions, near = _new_junctions(lines, arcs) if len(lines) else (set(), [])

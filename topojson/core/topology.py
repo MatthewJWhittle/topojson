@@ -193,11 +193,12 @@ class Topology(Hashmap):
             # execute previous steps
             super().__init__(data, options)
 
+        # Decoded float arcs from the last ArcSurface.commit (avoids re-decode).
+        # Initialized before `_topo` because options may call toposimplify/quantize.
+        self._float_arcs: list[np.ndarray] | None = None
+
         # execute main function of Topology
         self.output = self._topo(self.output)
-
-        # Decoded float arcs from the last ArcSurface.commit (avoids re-decode).
-        self._float_arcs: list[np.ndarray] | None = None
 
         # per feature a hash of its input geometry, used by sync()
         self._source_hashes = _source_hashes(data)
@@ -223,6 +224,25 @@ class Topology(Hashmap):
         arcs = self.output["arcs"]
         return copy.deepcopy(self, {id(arcs): list(arcs)})
 
+    def _copy_for_arc_edit(self) -> Self:
+        """
+        Cheap Topology copy for arc-only edits (simplify / smooth / quantize).
+
+        Shares ``objects`` and non-arc output values; only the arcs list slot and
+        options are replaced. Avoids ``deepcopy`` of tens of thousands of feature
+        dicts (dominant cost of ``simplify().smooth()`` on habitat meshes).
+        """
+        clone = object.__new__(type(self))
+        clone.options = copy.copy(self.options)
+        clone.output = dict(self.output)
+        arcs = self.output.get("arcs")
+        clone.output["arcs"] = list(arcs) if arcs is not None else []
+        clone._float_arcs = self._float_arcs
+        clone._source_hashes = getattr(self, "_source_hashes", {})
+        if hasattr(self, "last_sync"):
+            clone.last_sync = self.last_sync
+        return clone
+
     @property
     def __geo_interface__(self) -> dict[str, Any]:
         topo_object = self._copy_output()
@@ -244,11 +264,20 @@ class Topology(Hashmap):
             can continue from it.
             Default is `False`
         """
+        # Full deepcopy so callers can mutate the returned arcs without touching us.
         return self._to_dict(copy.deepcopy(self.output), options, state)
+
+    def _materialize_arc_lists(self, topo_object: dict[str, Any]) -> dict[str, Any]:
+        """Ensure ``arcs`` are nested Python lists (TopoJSON / JSON consumers)."""
+        arcs = topo_object.get("arcs") or []
+        if arcs and isinstance(arcs[0], np.ndarray):
+            topo_object["arcs"] = [np.asarray(a).tolist() for a in arcs]
+        return topo_object
 
     def _to_dict(
         self, topo_object: dict[str, Any], options: bool, state: bool
     ) -> dict[str, Any]:
+        topo_object = self._materialize_arc_lists(topo_object)
         topo_object = self._resolve_coords(topo_object)
         if options or state:
             topo_object["options"] = vars(self.options)
@@ -574,7 +603,7 @@ class Topology(Hashmap):
         object or None
             Quantized coordinates and delta-encoded arcs if `inplace` is `False`.
         """
-        result = self._copy()
+        result = self._copy_for_arc_edit()
         arcs = result.output["arcs"]
 
         if not arcs:
@@ -690,7 +719,7 @@ class Topology(Hashmap):
             raise ValueError("give either epsilon or keep")
         if keep is not None and not 0 <= keep <= 1:
             raise ValueError(f"keep is a share between 0 and 1, got: {keep!r}")
-        result = self._copy()
+        result = self._copy_for_arc_edit()
         if not result.options.toposimplify:
             result.options.toposimplify = epsilon
 
@@ -824,9 +853,9 @@ class Topology(Hashmap):
 
             topo.simplify(10).smooth(iterations=2)
 
-        Prefer ``topo.arcs().simplify(...).smooth(...).commit()`` when avoiding
-        intermediate list materialization matters; after this helper commits, the
-        float-arc cache stays warm for a following ``smooth``.
+        ``simplify().smooth()`` reuses decoded float arcs (no second decode) and
+        a light arc-edit copy (shared feature objects). ``output["arcs"]`` stays
+        as ``float64`` arrays until ``to_dict`` / ``to_json``.
         """
         surface = self.arcs().simplify(
             epsilon,

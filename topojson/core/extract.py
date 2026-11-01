@@ -193,6 +193,15 @@ class Extract:
         self._data = data
         self._serialize_geom_type(data)
 
+        # Prefer coordinate arrays over Shapely LineStrings for Join/quantize.
+        lines = []
+        for ls in self._linestrings:
+            if hasattr(ls, "coords"):
+                lines.append(np.asarray(ls.coords, dtype=np.float64))
+            else:
+                lines.append(np.asarray(ls, dtype=np.float64).reshape(-1, 2))
+        self._linestrings = lines
+
         # prepare to return object
         data = {
             "type": "Topology",
@@ -637,7 +646,15 @@ class Extract:
         if is_frame:
             props_frame = geom.drop(columns=[geom.geometry.name])
             if len(props_frame.columns):
-                prop_records = props_frame.to_dict(orient="records")
+                # Column-wise build is much cheaper than DataFrame.to_dict(records)
+                # on wide habitat attribute tables.
+                cols = {
+                    c: props_frame[c].to_numpy(copy=False) for c in props_frame.columns
+                }
+                names = list(cols)
+                prop_records = [
+                    {name: cols[name][i] for name in names} for i in range(n)
+                ]
             else:
                 prop_records = [{} for _ in range(n)]
         else:
@@ -673,7 +690,13 @@ class Extract:
             if int(n_rings.sum()) > 0:
                 ring_arr = shapely.get_rings(parts)
                 xy, ri = shapely.get_coordinates(ring_arr, return_index=True)
-                lines = list(shapely.linestrings(xy, indices=ri))
+                # Keep (n, 2) arrays — Join.quantize prefers arrays over LineStrings.
+                counts = np.bincount(ri)
+                starts = np.cumsum(counts) - counts
+                lines = [
+                    xy[int(starts[i]) : int(starts[i] + counts[i])]
+                    for i in range(len(counts))
+                ]
             else:
                 lines = []
         else:

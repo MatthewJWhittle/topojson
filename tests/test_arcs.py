@@ -50,6 +50,8 @@ def test_float_arc_cache_avoids_redecode_after_commit():
     simplified = topo.simplify(0.1)
     assert simplified._float_arcs is not None
     assert "transform" not in simplified.output
+    # Commit keeps float64 arrays in output["arcs"] (no nested-list materialize).
+    assert isinstance(simplified.output["arcs"][0], np.ndarray)
     # Warm cache: arcs() reuses the committed float arrays (no re-decode).
     surface = simplified.arcs()
     assert all(
@@ -57,9 +59,18 @@ def test_float_arc_cache_avoids_redecode_after_commit():
     )
     smoothed = simplified.smooth(iterations=1)
     assert smoothed._float_arcs is not None
+    assert isinstance(smoothed.output["arcs"][0], np.ndarray)
     # Quantized toposimplify drops the float cache.
     q = topo.toposimplify(0.1)
     assert q._float_arcs is None
+
+
+def test_copy_for_arc_edit_shares_objects():
+    topo = topojson.Topology([_zigzag()], prequantize=False)
+    clone = topo._copy_for_arc_edit()
+    assert clone.output["objects"] is topo.output["objects"]
+    assert clone.output["arcs"] is not topo.output["arcs"]
+    assert clone.options is not topo.options
 
 
 def test_toposmooth_is_alias_of_smooth():

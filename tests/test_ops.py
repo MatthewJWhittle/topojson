@@ -90,6 +90,8 @@ def test_ops_shared_path_ends_on_grid_equals_pairwise(quant_factor):
     linestrings = extracted["linestrings"]
     bbox = topojson.ops.bounds(linestrings)
     lines, _ = topojson.ops.quantize(linestrings, bbox, quant_factor)
+    # Extract emits coordinate arrays; quantize keeps arrays until Join.
+    lines = topojson.ops._as_linestring_list(lines)
     expected = pairwise_shared_path_ends(lines)
     assert topojson.ops.shared_path_ends_on_grid(lines) == expected
 
@@ -101,6 +103,7 @@ def test_ops_cut_lines_on_grid_equals_cut_line(quant_factor):
     linestrings = extracted["linestrings"]
     bbox = topojson.ops.bounds(linestrings)
     lines, _ = topojson.ops.quantize(linestrings, bbox, quant_factor)
+    lines = topojson.ops._as_linestring_list(lines)
     ends = sorted(topojson.ops.shared_path_ends_on_grid(lines))
     junctions = [geometry.Point(p) for p in ends]
     # a line through a junction that is not one of its vertices

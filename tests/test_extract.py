@@ -362,7 +362,12 @@ def test_extract_geopandas_polygon_fast_path_matches_legacy():
     assert fast["bookkeeping_geoms"] == slow["bookkeeping_geoms"]
     assert len(fast["linestrings"]) == len(slow["linestrings"])
     for a, b in zip(fast["linestrings"], slow["linestrings"]):
-        assert list(a.coords) == list(b.coords)
+        # Extract normalizes rings to float64 coordinate arrays.
+        import numpy as np
+
+        aa = np.asarray(a.coords if hasattr(a, "coords") else a, dtype=float)
+        bb = np.asarray(b.coords if hasattr(b, "coords") else b, dtype=float)
+        np.testing.assert_allclose(aa, bb)
     assert fast["objects"].keys() == slow["objects"].keys()
     for key in fast["objects"]:
         assert fast["objects"][key]["type"] == slow["objects"][key]["type"]

@@ -230,18 +230,24 @@ class ArcSurface:
         inplace: bool = False,
         smooth_method: str | bool = "chaikin",
     ) -> Topology | None:
-        """Write these float arcs onto a Topology; drop construction-grid transform."""
+        """Write these float arcs onto a Topology; drop construction-grid transform.
+
+        Stores ``float64`` arrays in ``output["arcs"]`` (no intermediate Python
+        nested lists). ``to_json`` / ``NpEncoder`` materialize lists on export.
+        Uses a light arc-edit copy so ``simplify().smooth()`` does not
+        ``deepcopy`` every feature object.
+        """
         topo = topology if topology is not None else self._topology
         if topo is None:
             raise ValueError(
                 "pass topology=... or build the surface with Topology.arcs()"
             )
-        result = topo if inplace else topo._copy()
-        result.output["arcs"] = self.as_lists()
+        result = topo if inplace else topo._copy_for_arc_edit()
+        # Keep arrays in-place; share the list with the float-arc cache.
+        result.output["arcs"] = self._coords
         result.output.pop("transform", None)
-        # Keep decoded arrays so Topology.simplify().smooth() does not re-decode.
         result._float_arcs = self._coords
-        lsbs = bounds(result.output["arcs"])
+        lsbs = bounds(self._coords)
         ptbs = bounds(result.output.get("coordinates") or [])
         result.output["bbox"] = compare_bounds(lsbs, ptbs)
         if "simplified" in self._tags and not result.options.toposimplify:
@@ -250,7 +256,7 @@ class ArcSurface:
             result.options.toposmooth = smooth_method
         if not inplace:
             return result
-        topo.output["arcs"] = result.output["arcs"]
+        topo.output["arcs"] = self._coords
         topo.output.pop("transform", None)
         topo._float_arcs = self._coords
         if "bbox" in result.output:
