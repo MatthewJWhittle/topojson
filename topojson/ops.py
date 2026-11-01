@@ -238,6 +238,38 @@ def shared_path_ends(pairs):
     return {xy for path in paths for xy in (path.coords[0], path.coords[-1])}
 
 
+def _coordinates_index(lines):
+    """Packed ``(V, 2)`` coordinates and per-vertex line index for geom or array arcs."""
+    if not len(lines):
+        return np.empty((0, 2), dtype=np.float64), np.empty(0, dtype=np.intp)
+    if hasattr(lines[0], "coords"):
+        return shapely.get_coordinates(lines, return_index=True)
+    arrays = [np.asarray(ls, dtype=np.float64).reshape(-1, 2) for ls in lines]
+    xy = np.concatenate(arrays) if arrays else np.empty((0, 2), dtype=np.float64)
+    li = np.repeat(np.arange(len(arrays), dtype=np.intp), [len(a) for a in arrays])
+    return xy, li
+
+
+def _as_linestring_list(lines):
+    """Ensure a list of Shapely LineStrings (batch-build from coordinate arrays)."""
+    if not len(lines) or hasattr(lines[0], "coords"):
+        return lines
+    xy, li = _coordinates_index(lines)
+    if len(xy) == 0:
+        return [geometry.LineString() for _ in lines]
+    # linestrings() needs ≥2 vertices per part; fall back per-arc when any are short.
+    counts = np.bincount(li, minlength=len(lines))
+    if int(counts.min()) >= 2:
+        return list(shapely.linestrings(xy, indices=li))
+    out = []
+    for i, n in enumerate(counts.tolist()):
+        if n < 2:
+            out.append(geometry.LineString())
+        else:
+            out.append(geometry.LineString(np.asarray(lines[i], dtype=float)))
+    return out
+
+
 def shared_path_ends_on_grid(linestrings):
     """
     Junctions of quantized lines: the start and end points of the paths that each
@@ -255,7 +287,7 @@ def shared_path_ends_on_grid(linestrings):
 
     Parameters
     ----------
-    linestrings : list of LineString
+    linestrings : list of LineString or (n, 2) arrays
         Lines with integer coordinates; a closed line continues from its end into
         its start
 
@@ -266,7 +298,7 @@ def shared_path_ends_on_grid(linestrings):
     """
     if len(linestrings) == 0:
         return set()
-    xy, li = shapely.get_coordinates(linestrings, return_index=True)
+    xy, li = _coordinates_index(linestrings)
     xy = xy.astype(np.int64)
     s, h, vertex = _grid_segments(xy, li)
     at, pts = _t_vertices(xy, li, s, h)
@@ -275,9 +307,23 @@ def shared_path_ends_on_grid(linestrings):
         xy = np.insert(xy, at[o] + 1, pts[o], axis=0)
         li = np.insert(li, at[o] + 1, li[at[o]])
         s, h, vertex = _grid_segments(xy, li)
-    closed = shapely.is_closed(np.asarray(linestrings, dtype=object))
+    if hasattr(linestrings[0], "coords"):
+        closed = shapely.is_closed(np.asarray(linestrings, dtype=object))
+    else:
+        closed = np.fromiter(
+            (
+                len(a) > 2 and bool(np.array_equal(np.asarray(a[0]), np.asarray(a[-1])))
+                for a in linestrings
+            ),
+            dtype=bool,
+            count=len(linestrings),
+        )
     points, pairs = _junction_vertices(xy, li, s, h, vertex, closed)
-    ends = shared_path_ends([(linestrings[i], linestrings[j]) for i, j in pairs])
+    if len(pairs):
+        geoms = _as_linestring_list(linestrings)
+        ends = shared_path_ends([(geoms[i], geoms[j]) for i, j in pairs])
+    else:
+        ends = set()
     return ends | set(map(tuple, points.tolist()))
 
 
@@ -480,7 +526,7 @@ def cut_lines_on_grid(linestrings, junctions, is_ring):
 
     Parameters
     ----------
-    linestrings : list of LineString
+    linestrings : list of LineString or (n, 2) arrays
         Lines with integer coordinates
     junctions : list of Point
         Junctions with integer coordinates
@@ -494,7 +540,8 @@ def cut_lines_on_grid(linestrings, junctions, is_ring):
     numpy.ndarray
         Number of parts of each line
     """
-    lines = np.asarray(linestrings, dtype=object)
+    # STRtree query needs geometries; batch-build once if we were given arrays.
+    lines = np.asarray(_as_linestring_list(linestrings), dtype=object)
     junctions = np.asarray(junctions, dtype=object)
     xy, li = shapely.get_coordinates(lines, return_index=True)
     jxy = shapely.get_coordinates(junctions)
@@ -700,20 +747,27 @@ def bounds(arr):
     tuple
         (minx, miny, maxx, maxy)
     """
-    if len(arr):
-        if hasattr(arr[0], "coords"):
-            arr = np.vstack([a.coords for a in arr]).T
-        else:
-            arr = np.vstack(arr).T
-        bounds = (
-            np.nanmin(arr[0]),
-            np.nanmin(arr[1]),
-            np.nanmax(arr[0]),
-            np.nanmax(arr[1]),
+    if not len(arr):
+        return []
+    first = arr[0]
+    if hasattr(first, "coords"):
+        # Shapely 2 vectorized path — avoids per-geom `.coords` Python walks.
+        xy = shapely.get_coordinates(arr)
+        if xy.size == 0:
+            return []
+        return (
+            float(np.nanmin(xy[:, 0])),
+            float(np.nanmin(xy[:, 1])),
+            float(np.nanmax(xy[:, 0])),
+            float(np.nanmax(xy[:, 1])),
         )
-    else:
-        bounds = []
-    return bounds
+    stacked = np.vstack([np.asarray(a, dtype=np.float64).reshape(-1, 2) for a in arr])
+    return (
+        float(np.nanmin(stacked[:, 0])),
+        float(np.nanmin(stacked[:, 1])),
+        float(np.nanmax(stacked[:, 0])),
+        float(np.nanmax(stacked[:, 1])),
+    )
 
 
 def compare_bounds(b0, b1):
@@ -1083,13 +1137,12 @@ def quantize(linestrings, bbox, quant_factor=1e5, transform=None):
         counts = np.array([len(line) for line in lines])
         coords, idx = np.concatenate(lines), np.repeat(np.arange(n), counts)
 
-    if not is_geom:
-        linestrings = [line.tolist() for line in lines]
-    elif counts.min() > 1:
-        linestrings = list(shapely.linestrings(coords, indices=idx))
-    else:
-        linestrings = [geometry.LineString(line) for line in lines]
-    return linestrings, transform_
+    # Geom input → LineStrings (historical API / ops tests). Array input (Extract
+    # rings, point coordinates) stays as arrays; Join batch-builds LineStrings.
+    out = list(lines)
+    if is_geom:
+        out = _as_linestring_list(out)
+    return out, transform_
 
 
 def simplify(
@@ -1427,6 +1480,25 @@ def simplify_coverage(linestrings, polygons, epsilon, exterior_cw=None):
     return linestrings
 
 
+def _arc_offsets(counts):
+    """Start index of each run in a packed buffer whose run lengths are ``counts``."""
+    starts = np.empty(len(counts), dtype=np.intp)
+    if len(counts):
+        starts[0] = 0
+        if len(counts) > 1:
+            np.cumsum(counts[:-1], out=starts[1:])
+    return starts
+
+
+def _offsets_within(counts):
+    """``0 .. n_i-1`` repeated for each run length in ``counts`` (packed)."""
+    total = int(np.sum(counts))
+    if total == 0:
+        return np.empty(0, dtype=np.intp)
+    idx = np.arange(total, dtype=np.intp)
+    return idx - np.repeat(_arc_offsets(counts), counts)
+
+
 def segmentize(xy, max_segment_length):
     """
     Densify an open polyline so no edge is longer than ``max_segment_length``.
@@ -1455,22 +1527,41 @@ def segmentize(xy, max_segment_length):
     if len(pts) < 2:
         return pts.copy()
 
-    out = [pts[0]]
-    for i in range(len(pts) - 1):
+    dxy = np.diff(pts, axis=0)
+    dist = np.linalg.norm(dxy, axis=1)
+    # Subdivisions per edge (1 = keep the end vertex only).
+    n_sub = np.ones(len(dist), dtype=np.intp)
+    long = dist > max_segment_length
+    if np.any(long):
+        n_sub[long] = np.ceil(dist[long] / max_segment_length).astype(np.intp)
+    # Output = start vertex + sum(n_sub) end/interior vertices.
+    out_len = 1 + int(n_sub.sum())
+    out = np.empty((out_len, 2), dtype=np.float64)
+    out[0] = pts[0]
+    cursor = 1
+    for i, n in enumerate(n_sub.tolist()):
         p0 = pts[i]
         p1 = pts[i + 1]
-        dist = float(np.linalg.norm(p1 - p0))
-        if dist <= max_segment_length or dist == 0.0:
-            out.append(p1)
+        if n == 1:
+            out[cursor] = p1
+            cursor += 1
             continue
-        n = int(np.ceil(dist / max_segment_length))
+        # Embed interiors then the endpoint.
         for k in range(1, n):
-            out.append(p0 + (p1 - p0) * (k / n))
-        out.append(p1)
-    result = np.asarray(out, dtype=np.float64)
-    result[0] = pts[0]
-    result[-1] = pts[-1]
-    return result
+            out[cursor] = p0 + (p1 - p0) * (k / n)
+            cursor += 1
+        out[cursor] = p1
+        cursor += 1
+    out[0] = pts[0]
+    out[-1] = pts[-1]
+    return out
+
+
+def segmentize_many(arcs, max_segment_length):
+    """Densify many float arcs; same contract as :func:`segmentize` per arc."""
+    if max_segment_length <= 0:
+        raise ValueError(f"max_segment_length must be > 0, got: {max_segment_length!r}")
+    return [segmentize(arc, max_segment_length) for arc in arcs]
 
 
 def chaikin(xy, iterations=2):
@@ -1499,18 +1590,85 @@ def chaikin(xy, iterations=2):
         raise ValueError(f"expected (n, 2) coordinates, got shape {pts.shape}")
     if len(pts) < 3 or iterations <= 0:
         return pts.copy()
+    packed = chaikin_many([pts], iterations=iterations)
+    return packed[0]
+
+
+def _chaikin_iteration_packed(xy, lengths):
+    """One Chaikin pass on a packed ``(V, 2)`` buffer with per-arc ``lengths``."""
+    starts = _arc_offsets(lengths)
+    n_out = lengths * 2
+    out_starts = _arc_offsets(n_out)
+    out = np.empty((int(n_out.sum()), 2), dtype=np.float64)
+    # Pin endpoints to the iteration inputs (then to the originals across passes).
+    out[out_starts] = xy[starts]
+    out[out_starts + n_out - 1] = xy[starts + lengths - 1]
+
+    seg_counts = lengths - 1
+    total_seg = int(seg_counts.sum())
+    if total_seg == 0:
+        return out, n_out
+
+    within = _offsets_within(seg_counts)
+    left = np.repeat(starts, seg_counts) + within
+    p0 = xy[left]
+    p1 = xy[left + 1]
+    q_idx = np.repeat(out_starts, seg_counts) + 1 + 2 * within
+    out[q_idx] = 0.75 * p0 + 0.25 * p1
+    out[q_idx + 1] = 0.25 * p0 + 0.75 * p1
+    return out, n_out
+
+
+def chaikin_many(arcs, iterations=2):
+    """
+    Chaikin corner-cutting on many open polylines via one packed float buffer.
+
+    Short arcs (fewer than three vertices) are returned unchanged. Endpoints of
+    every arc stay fixed. Prefer this over a Python loop of :func:`chaikin` when
+    smoothing wide meshes (millions of vertices).
+    """
+    if iterations <= 0:
+        return [np.asarray(a, dtype=np.float64).copy() for a in arcs]
+
+    arrays = []
+    for arc in arcs:
+        pts = np.asarray(arc, dtype=np.float64)
+        if pts.ndim != 2 or pts.shape[1] != 2:
+            raise ValueError(f"expected (n, 2) coordinates, got shape {pts.shape}")
+        arrays.append(pts)
+
+    out: list[np.ndarray | None] = [None] * len(arrays)
+    long_idx: list[int] = []
+    long_arcs: list[np.ndarray] = []
+    for i, pts in enumerate(arrays):
+        if len(pts) < 3:
+            out[i] = pts.copy()
+        else:
+            long_idx.append(i)
+            long_arcs.append(pts)
+
+    if not long_arcs:
+        return [a if a is not None else arrays[i].copy() for i, a in enumerate(out)]
+
+    lengths = np.fromiter((len(a) for a in long_arcs), np.intp, len(long_arcs))
+    xy = np.concatenate(long_arcs)
+    # Snapshot original endpoints so every iteration pins to the input ends.
+    starts0 = _arc_offsets(lengths)
+    ends0 = xy[starts0 + lengths - 1].copy()
+    starts_xy0 = xy[starts0].copy()
+
     for _ in range(iterations):
-        n = len(pts)
-        # [P0] + (Q, R) per segment + [Pn] -> 2n points; ends pinned to originals.
-        out = np.empty((2 * n, 2), dtype=np.float64)
-        p0 = pts[:-1]
-        p1 = pts[1:]
-        out[0] = pts[0]
-        out[1:-1:2] = 0.75 * p0 + 0.25 * p1
-        out[2:-1:2] = 0.25 * p0 + 0.75 * p1
-        out[-1] = pts[-1]
-        pts = out
-    return pts
+        xy, lengths = _chaikin_iteration_packed(xy, lengths)
+        # Re-pin to the pre-smooth endpoints (numerical drift guard).
+        out_starts = _arc_offsets(lengths)
+        xy[out_starts] = starts_xy0
+        xy[out_starts + lengths - 1] = ends0
+
+    starts = _arc_offsets(lengths)
+    for i, src in enumerate(long_idx):
+        s = int(starts[i])
+        out[src] = xy[s : s + int(lengths[i])].copy()
+    return [a if a is not None else arrays[i].copy() for i, a in enumerate(out)]
 
 
 def _lerp_knot(t_a, t_b, pa, pb, t):
@@ -1620,16 +1778,12 @@ def smooth_arcs(arcs, method="chaikin", iterations=2, samples=6, segment_length=
         raise ValueError(
             f"unknown smooth method {method!r}; choose 'chaikin' or 'catmull_rom'"
         )
-    out = []
-    for arc in arcs:
-        xy = np.asarray(arc, dtype=np.float64)
-        if segment_length is not None:
-            xy = segmentize(xy, segment_length)
-        if method == "chaikin":
-            out.append(chaikin(xy, iterations=iterations).tolist())
-        else:
-            out.append(catmull_rom(xy, samples=samples).tolist())
-    return out
+    coords = [np.asarray(arc, dtype=np.float64) for arc in arcs]
+    if segment_length is not None:
+        coords = segmentize_many(coords, segment_length)
+    if method == "chaikin":
+        return [a.tolist() for a in chaikin_many(coords, iterations=iterations)]
+    return [catmull_rom(xy, samples=samples).tolist() for xy in coords]
 
 
 def restore_collapsed_rings(arcs, original, rings):

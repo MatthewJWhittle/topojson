@@ -4,6 +4,7 @@ import logging
 import pprint
 
 import numpy as np
+import shapely
 from shapely import geometry
 from shapely.errors import GeometryTypeError
 
@@ -11,6 +12,14 @@ from ..ops import winding_order
 from ..utils import TopoOptions, instance, serialize_as_svg
 
 logger = logging.getLogger(__name__)
+
+# Shapely type ids eligible for the vectorized GeoPandas polygon extract path.
+_POLYGON_TYPE_IDS = frozenset(
+    {
+        int(shapely.GeometryType.POLYGON),
+        int(shapely.GeometryType.MULTIPOLYGON),
+    }
+)
 
 
 def _is_polars(obj):
@@ -23,8 +32,6 @@ def _polars_geometries(column):
     The geometries of a Polars column of WKB or EWKB, as polars-st stores them, and
     the CRS of their SRID if they share one.
     """
-    import shapely
-
     geoms = shapely.from_wkb(column.to_numpy())
     srids = set(shapely.get_srid(geoms[~shapely.is_missing(geoms)]).tolist()) - {0}
     crs = f"EPSG:{srids.pop()}" if len(srids) == 1 else None
@@ -185,6 +192,15 @@ class Extract:
 
         self._data = data
         self._serialize_geom_type(data)
+
+        # Prefer coordinate arrays over Shapely LineStrings for Join/quantize.
+        lines = []
+        for ls in self._linestrings:
+            if hasattr(ls, "coords"):
+                lines.append(np.asarray(ls.coords, dtype=np.float64))
+            else:
+                lines.append(np.asarray(ls, dtype=np.float64).reshape(-1, 2))
+        self._linestrings = lines
 
         # prepare to return object
         data = {
@@ -609,12 +625,7 @@ class Extract:
 
         if geom.crs:
             self._defined_crs_source = geom.crs
-        # DataFrame index must be unique for orient='index'.
-        if geom.index.is_unique:
-            self._data = geom.to_dict(orient="index")
-        else:
-            self._data = dict(enumerate(geom.to_dict(orient="records")))
-        self._extract_records()
+        self._extract_geopandas_features(geom, is_frame=True)
 
     def _extract_geopandas_geoseries(self, geom):
         """
@@ -626,8 +637,165 @@ class Extract:
             GeoSeries instance
         """
 
-        self._data = geom.to_dict()
-        self._extract_records()
+        self._extract_geopandas_features(geom, is_frame=False)
+
+    def _geopandas_keys_and_props(self, geom, *, is_frame: bool):
+        """Feature keys and property dicts without serializing geometries."""
+        n = len(geom)
+        keys = list(geom.index) if geom.index.is_unique else list(range(n))
+        if is_frame:
+            props_frame = geom.drop(columns=[geom.geometry.name])
+            if len(props_frame.columns):
+                # Column-wise build is much cheaper than DataFrame.to_dict(records)
+                # on wide habitat attribute tables.
+                cols = {
+                    c: props_frame[c].to_numpy(copy=False) for c in props_frame.columns
+                }
+                names = list(cols)
+                prop_records = [
+                    {name: cols[name][i] for name in names} for i in range(n)
+                ]
+            else:
+                prop_records = [{} for _ in range(n)]
+        else:
+            prop_records = [{} for _ in range(n)]
+        return keys, prop_records
+
+    def _append_polygon_features(self, arr, keys, prop_records, poly_idx):
+        """
+        Vectorized rings → LineStrings for Polygon / MultiPolygon rows.
+
+        ``poly_idx`` are positions into ``arr`` / ``keys``. LineString indices in
+        bookkeeping are absolute against ``self._linestrings``.
+        """
+        subset = arr[poly_idx]
+        if self.options.winding_order is not None:
+            exterior_cw = self.options.winding_order == "CW_CCW"
+            subset = shapely.orient_polygons(subset, exterior_cw=exterior_cw)
+            arr[poly_idx] = subset
+
+        parts, owners = shapely.get_parts(subset, return_index=True)
+        if len(parts):
+            only_poly = shapely.get_type_id(parts) == int(shapely.GeometryType.POLYGON)
+            parts = parts[only_poly]
+            owners = owners[only_poly]
+
+        ls_base = len(self._linestrings)
+        bk_base = len(self._bookkeeping_geoms)
+
+        if len(parts):
+            n_int = shapely.get_num_interior_rings(parts)
+            empty_part = shapely.is_empty(parts)
+            n_rings = np.where(empty_part, 0, 1 + n_int).astype(np.intp, copy=False)
+            if int(n_rings.sum()) > 0:
+                ring_arr = shapely.get_rings(parts)
+                xy, ri = shapely.get_coordinates(ring_arr, return_index=True)
+                # Keep (n, 2) arrays — Join.quantize prefers arrays over LineStrings.
+                counts = np.bincount(ri)
+                starts = np.cumsum(counts) - counts
+                lines = [
+                    xy[int(starts[i]) : int(starts[i] + counts[i])]
+                    for i in range(len(counts))
+                ]
+            else:
+                lines = []
+        else:
+            n_rings = np.empty(0, dtype=np.intp)
+            lines = []
+
+        bookkeeping: list[list[int]] = []
+        part_bk: list[int] = []
+        ls_i = ls_base
+        for nr in n_rings.tolist():
+            if nr == 0:
+                bookkeeping.append([])
+            else:
+                bookkeeping.append(list(range(ls_i, ls_i + nr)))
+                ls_i += nr
+            part_bk.append(bk_base + len(bookkeeping) - 1)
+
+        feat_arcs: dict[int, list[int]] = {int(i): [] for i in range(len(subset))}
+        for part_i, local_feat in enumerate(owners.tolist()):
+            feat_arcs[int(local_feat)].append(part_bk[part_i])
+
+        self._linestrings.extend(lines)
+        self._bookkeeping_geoms.extend(bookkeeping)
+
+        for local_i, global_i in enumerate(poly_idx.tolist()):
+            geom_i = subset[local_i]
+            key = keys[global_i]
+            obj = {
+                "properties": prop_records[global_i],
+                "type": geom_i.geom_type,
+            }
+            arcs_i = feat_arcs.get(local_i, [])
+            # Empty MultiPolygon omits arcs; empty Polygon keeps arcs → [] bookkeeping.
+            if arcs_i or (
+                not shapely.is_empty(geom_i) and geom_i.geom_type == "Polygon"
+            ):
+                obj["arcs"] = arcs_i
+            self._data[key] = obj
+
+    def _extract_geopandas_features(self, geom, *, is_frame: bool) -> None:
+        """
+        Array-native Extract for GeoPandas: vectorize Polygon / MultiPolygon
+        rows, legacy serialize for LineString / GeometryCollection / others.
+
+        Avoids ``GeoDataFrame.to_dict`` geometry round-trips on the polygon
+        majority (Living England, C-CAP meshes).
+        """
+        geoms = np.asarray(
+            geom.geometry.values if is_frame else geom.values, dtype=object
+        )
+        keys, prop_records = self._geopandas_keys_and_props(geom, is_frame=is_frame)
+        self._data = {}
+        self._is_single = False
+        if len(geoms) == 0:
+            return
+
+        type_ids = shapely.get_type_id(geoms)
+        poly_mask = np.isin(type_ids, list(_POLYGON_TYPE_IDS))
+
+        # Copy so orient_polygons can rewrite polygon slots in-place safely.
+        arr = geoms.copy()
+        # Walk features in order: batch contiguous Polygon/MultiPolygon runs
+        # (stable linestring indices vs the legacy dict path), legacy-serialize
+        # LineString / GeometryCollection / other rows one by one.
+        i = 0
+        n = len(arr)
+        while i < n:
+            if poly_mask[i]:
+                j = i + 1
+                while j < n and poly_mask[j]:
+                    j += 1
+                self._append_polygon_features(
+                    arr, keys, prop_records, np.arange(i, j, dtype=np.intp)
+                )
+                i = j
+                continue
+
+            g = arr[i]
+            if g is None or shapely.is_missing(g):
+                self._invalid_geoms += 1
+                i += 1
+                continue
+            self._key = keys[i]
+            if g.geom_type == "GeometryCollection":
+                self._obj = {
+                    "properties": prop_records[i],
+                    "type": g.geom_type,
+                    "geometries": g.__geo_interface__["geometries"],
+                }
+            else:
+                self._obj = {
+                    "properties": prop_records[i],
+                    "type": g.geom_type,
+                }
+            self._data[self._key] = self._obj
+            self._serialize_geom_type(g)
+            self._geomcollection_counter = 0
+            self._geom_level_1 = 0
+            i += 1
 
     def _extract_polars_dataframe(self, geom):
         """

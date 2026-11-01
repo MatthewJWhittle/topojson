@@ -3,11 +3,13 @@ import copy
 import pprint
 
 import numpy as np
+import shapely
 from shapely import geometry
 from shapely.errors import ShapelyError
 from shapely.ops import linemerge, shared_paths
 
 from ..ops import (
+    _as_linestring_list,
     bounds,
     compare_bounds,
     quantize,
@@ -132,6 +134,10 @@ class Join(Extract):
             else:
                 simplify_factor = self.options.presimplify
 
+            # Shapely simplify / coverage need geometries, not coordinate arrays.
+            if data["linestrings"] and not hasattr(data["linestrings"][0], "coords"):
+                data["linestrings"] = _as_linestring_list(data["linestrings"])
+
             if self.options.simplify_with == "geos":
                 # polygons together as a coverage, the other lines one by one
                 lines = data["linestrings"]
@@ -192,6 +198,8 @@ class Join(Extract):
             data["linestrings"], data["transform"] = quantize(
                 data["linestrings"], data["bbox"], quant_factor, transform=transform
             )
+            # Junction / cut STRtree paths need geometries; points stay arrays.
+            data["linestrings"] = _as_linestring_list(data["linestrings"])
 
             data["coordinates"], data["transform"] = quantize(
                 data["coordinates"], data["bbox"], quant_factor, transform=transform
@@ -200,6 +208,10 @@ class Join(Extract):
         if not self.options.topology or not data["linestrings"]:
             data["junctions"] = self._junctions
             return data
+
+        # Non-quantized join uses STRtree / shared_paths on geometries.
+        if not quantized and not hasattr(data["linestrings"][0], "coords"):
+            data["linestrings"] = _as_linestring_list(data["linestrings"])
 
         if self.options.shared_coords:
 
@@ -221,7 +233,8 @@ class Join(Extract):
                         junctions.append(vert)
                     geoms[vert] = neighs
 
-            self._junctions = [geometry.Point(xy) for xy in set(junctions)]
+            pts = np.asarray(list(set(junctions)), dtype=np.float64).reshape(-1, 2)
+            self._junctions = list(shapely.points(pts)) if len(pts) else []
         else:
             # junctions are the ends of the paths shared by two linestrings
             if quantized:
@@ -230,7 +243,12 @@ class Join(Extract):
                 idx_combs, _ = select_unique_combs(data["linestrings"])
                 lines = data["linestrings"]
                 ends = shared_path_ends([(lines[i], lines[j]) for i, j in idx_combs])
-            self._junctions = list(map(geometry.Point, ends))
+            # Batch Point construction (avoids per-junction Python Point(...)).
+            if ends:
+                pts = np.asarray(list(ends), dtype=np.float64).reshape(-1, 2)
+                self._junctions = list(shapely.points(pts))
+            else:
+                self._junctions = []
 
         # prepare to return object
         data["junctions"] = self._junctions

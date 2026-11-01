@@ -7,7 +7,7 @@ import pytest
 from shapely import geometry
 
 import topojson
-from topojson.ops import catmull_rom, chaikin
+from topojson.ops import catmull_rom, chaikin, chaikin_many
 
 
 def _two_squares():
@@ -30,6 +30,17 @@ def test_chaikin_two_point_arc_unchanged():
     xy = np.array([[0.0, 0.0], [1.0, 0.0]])
     out = chaikin(xy, iterations=3)
     np.testing.assert_array_equal(out, xy)
+
+
+def test_chaikin_many_matches_per_arc_chaikin():
+    arcs = [
+        np.array([[0.0, 0.0], [1.0, 1.0], [2.0, 0.0], [3.0, 1.0]]),
+        np.array([[0.0, 0.0], [1.0, 0.0]]),  # short: unchanged
+        np.array([[0.0, 0.0], [0.5, 1.0], [1.0, 0.0]]),
+    ]
+    batched = chaikin_many(arcs, iterations=2)
+    for src, got in zip(arcs, batched):
+        np.testing.assert_allclose(got, chaikin(src, iterations=2))
 
 
 def test_segmentize_caps_edge_length_and_pins_ends():

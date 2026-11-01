@@ -4,6 +4,12 @@ Decode once with ``Topology.arcs()``, chain ``simplify`` / ``segmentize`` /
 ``smooth`` / ``map``, then ``commit()`` back onto a Topology. Shared borders stay
 one arc; indices are unchanged. Endpoints are pinned by the built-in smoothers
 and by ``segmentize``.
+
+Prefer ``topo.arcs().simplify(...).smooth(...).commit()`` over
+``topo.simplify(...).smooth(...)`` when you care about decode cost: the high-level
+helpers commit (and list-materialize) between steps unless a float-arc cache is
+already warm. After ``commit``, ``Topology`` keeps decoded float arrays so a
+follow-up ``arcs()`` / ``smooth`` does not re-decode.
 """
 
 from __future__ import annotations
@@ -18,10 +24,10 @@ from .ops import (
     arc_coordinates,
     bounds,
     catmull_rom,
-    chaikin,
+    chaikin_many,
     compare_bounds,
     restore_collapsed_rings,
-    segmentize,
+    segmentize_many,
     simplify,
     simplify_keep,
 )
@@ -61,6 +67,9 @@ class ArcSurface:
     @classmethod
     def from_topology(cls, topology: Topology) -> Self:
         """Decode a Topology's arcs (and transform, if any) into float space."""
+        cached = getattr(topology, "_float_arcs", None)
+        if cached is not None and topology.output.get("transform") is None:
+            return cls(cached, topology=topology)
         arcs = topology.output.get("arcs") or []
         coords = arc_coordinates(arcs, topology.output.get("transform"))
         return cls(coords, topology=topology)
@@ -99,7 +108,7 @@ class ArcSurface:
             raise ValueError(
                 f"max_segment_length must be > 0, got: {max_segment_length!r}"
             )
-        return self._spawn([segmentize(c, max_segment_length) for c in self._coords])
+        return self._spawn(segmentize_many(self._coords, max_segment_length))
 
     def simplify(
         self,
@@ -187,16 +196,14 @@ class ArcSurface:
                 f"segment_length must be > 0 when set, got: {segment_length!r}"
             )
 
-        surface: ArcSurface = self
+        coords = self._coords
         if segment_length is not None:
-            surface = surface.segmentize(segment_length)
-        out: list[np.ndarray] = []
-        for arc in surface._coords:
-            if method == "chaikin":
-                out.append(chaikin(arc, iterations=iterations))
-            else:
-                out.append(catmull_rom(arc, samples=samples))
-        return surface._spawn(out, "smoothed")
+            coords = segmentize_many(coords, segment_length)
+        if method == "chaikin":
+            out = chaikin_many(coords, iterations=iterations)
+        else:
+            out = [catmull_rom(arc, samples=samples) for arc in coords]
+        return self._spawn(out, "smoothed")
 
     @overload
     def commit(
@@ -223,16 +230,24 @@ class ArcSurface:
         inplace: bool = False,
         smooth_method: str | bool = "chaikin",
     ) -> Topology | None:
-        """Write these float arcs onto a Topology; drop construction-grid transform."""
+        """Write these float arcs onto a Topology; drop construction-grid transform.
+
+        Stores ``float64`` arrays in ``output["arcs"]`` (no intermediate Python
+        nested lists). ``to_json`` / ``NpEncoder`` materialize lists on export.
+        Uses a light arc-edit copy so ``simplify().smooth()`` does not
+        ``deepcopy`` every feature object.
+        """
         topo = topology if topology is not None else self._topology
         if topo is None:
             raise ValueError(
                 "pass topology=... or build the surface with Topology.arcs()"
             )
-        result = topo if inplace else topo._copy()
-        result.output["arcs"] = self.as_lists()
+        result = topo if inplace else topo._copy_for_arc_edit()
+        # Keep arrays in-place; share the list with the float-arc cache.
+        result.output["arcs"] = self._coords
         result.output.pop("transform", None)
-        lsbs = bounds(result.output["arcs"])
+        result._float_arcs = self._coords
+        lsbs = bounds(self._coords)
         ptbs = bounds(result.output.get("coordinates") or [])
         result.output["bbox"] = compare_bounds(lsbs, ptbs)
         if "simplified" in self._tags and not result.options.toposimplify:
@@ -241,8 +256,9 @@ class ArcSurface:
             result.options.toposmooth = smooth_method
         if not inplace:
             return result
-        topo.output["arcs"] = result.output["arcs"]
+        topo.output["arcs"] = self._coords
         topo.output.pop("transform", None)
+        topo._float_arcs = self._coords
         if "bbox" in result.output:
             topo.output["bbox"] = result.output["bbox"]
         topo.options.toposimplify = result.options.toposimplify

@@ -151,12 +151,15 @@ def measure_smooth(
     method: str = "chaikin",
     iterations: int = 2,
     samples: int = 6,
+    segment_length: float | None = None,
+    recipe: str | None = None,
 ) -> dict[str, Any]:
     """Time Topology.toposmooth after toposimplify (one call site).
 
     Defaults match the library: Chaikin, two iterations. Records method,
-    iterations/samples, wall time, smoothed vertex count, and growth vs the
-    arcs handed in (usually the simplified topology).
+    iterations/samples, optional ``segment_length`` / ``recipe`` tags, wall
+    time, smoothed vertex count, and growth vs the arcs handed in (usually
+    the simplified topology).
     """
     smooth_fn = getattr(topo, "toposmooth", None)
     if not callable(smooth_fn):
@@ -169,6 +172,8 @@ def measure_smooth(
         kwargs["iterations"] = iterations
     elif method == "catmull_rom":
         kwargs["samples"] = samples
+    if segment_length is not None:
+        kwargs["segment_length"] = segment_length
     try:
         t0 = time.perf_counter()
         smoothed = smooth_fn(**kwargs)
@@ -187,6 +192,10 @@ def measure_smooth(
             row["smooth_iterations"] = iterations
         if method == "catmull_rom":
             row["smooth_samples"] = samples
+        if segment_length is not None:
+            row["segment_length"] = segment_length
+        if recipe is not None:
+            row["smooth_recipe"] = recipe
         if n_before > 0:
             row["smooth_growth"] = round(n_smoothed / n_before, 4)
         return row

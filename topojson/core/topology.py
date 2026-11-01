@@ -81,6 +81,16 @@ class Topology(Hashmap):
         computed Topology (`topo.output["transform"]`). The grid then stays the same
         when features are added or removed.
         Default is `True` (which correspond to a quantize factor of `1e5`).
+
+        Guidance for habitat / OBIA meshes (Living England, C-CAP, and similar):
+        prefer ``prequantize=True`` (or an explicit factor / fixed transform) when
+        shared borders are already coincident enough for the construction grid —
+        join/cut then use the linear quantized path and Topology wall is typically
+        several times faster than ``False``. Use ``prequantize=False`` when you
+        need exact float shared-border matching via GEOS pairwise intersections
+        (slower; use sparingly on mid/wide meshes). After ``simplify`` / ``smooth``
+        the construction-grid ``transform`` is dropped; do not re-quantize
+        smoothed float arcs onto that grid.
     topoquantize : boolean, int or dict
         If the topoquantization parameter is specified, the input geometry is quantized
         after the topology is constructed. If the topology is already quantized this
@@ -183,11 +193,19 @@ class Topology(Hashmap):
             # execute previous steps
             super().__init__(data, options)
 
+        # Decoded float arcs from the last ArcSurface.commit (avoids re-decode).
+        # Initialized before `_topo` because options may call toposimplify/quantize.
+        self._float_arcs: list[np.ndarray] | None = None
+
         # execute main function of Topology
         self.output = self._topo(self.output)
 
         # per feature a hash of its input geometry, used by sync()
         self._source_hashes = _source_hashes(data)
+
+    def _invalidate_float_arcs(self) -> None:
+        """Drop the decoded float-arc cache after arcs or transform change."""
+        self._float_arcs = None
 
     def __repr__(self) -> str:
         return f"Topology(\n{pprint.pformat(self.output)}\n)"
@@ -205,6 +223,25 @@ class Topology(Hashmap):
         """
         arcs = self.output["arcs"]
         return copy.deepcopy(self, {id(arcs): list(arcs)})
+
+    def _copy_for_arc_edit(self) -> Self:
+        """
+        Cheap Topology copy for arc-only edits (simplify / smooth / quantize).
+
+        Shares ``objects`` and non-arc output values; only the arcs list slot and
+        options are replaced. Avoids ``deepcopy`` of tens of thousands of feature
+        dicts (dominant cost of ``simplify().smooth()`` on habitat meshes).
+        """
+        clone = object.__new__(type(self))
+        clone.options = copy.copy(self.options)
+        clone.output = dict(self.output)
+        arcs = self.output.get("arcs")
+        clone.output["arcs"] = list(arcs) if arcs is not None else []
+        clone._float_arcs = self._float_arcs
+        clone._source_hashes = getattr(self, "_source_hashes", {})
+        if hasattr(self, "last_sync"):
+            clone.last_sync = self.last_sync
+        return clone
 
     @property
     def __geo_interface__(self) -> dict[str, Any]:
@@ -227,11 +264,20 @@ class Topology(Hashmap):
             can continue from it.
             Default is `False`
         """
+        # Full deepcopy so callers can mutate the returned arcs without touching us.
         return self._to_dict(copy.deepcopy(self.output), options, state)
+
+    def _materialize_arc_lists(self, topo_object: dict[str, Any]) -> dict[str, Any]:
+        """Ensure ``arcs`` are nested Python lists (TopoJSON / JSON consumers)."""
+        arcs = topo_object.get("arcs") or []
+        if arcs and isinstance(arcs[0], np.ndarray):
+            topo_object["arcs"] = [np.asarray(a).tolist() for a in arcs]
+        return topo_object
 
     def _to_dict(
         self, topo_object: dict[str, Any], options: bool, state: bool
     ) -> dict[str, Any]:
+        topo_object = self._materialize_arc_lists(topo_object)
         topo_object = self._resolve_coords(topo_object)
         if options or state:
             topo_object["options"] = vars(self.options)
@@ -557,7 +603,7 @@ class Topology(Hashmap):
         object or None
             Quantized coordinates and delta-encoded arcs if `inplace` is `False`.
         """
-        result = self._copy()
+        result = self._copy_for_arc_edit()
         arcs = result.output["arcs"]
 
         if not arcs:
@@ -578,6 +624,7 @@ class Topology(Hashmap):
         result.output["arcs"] = delta_encoding(arcs_qnt)
         result.output["transform"] = transform
         result.options.topoquantize = quant_factor
+        result._invalidate_float_arcs()
 
         if not inplace:
             return result
@@ -585,6 +632,7 @@ class Topology(Hashmap):
         self.output["arcs"] = result.output["arcs"]
         self.output["transform"] = result.output["transform"]
         self.options.topoquantize = result.options.topoquantize
+        self._invalidate_float_arcs()
         return None
 
     @overload
@@ -671,7 +719,7 @@ class Topology(Hashmap):
             raise ValueError("give either epsilon or keep")
         if keep is not None and not 0 <= keep <= 1:
             raise ValueError(f"keep is a share between 0 and 1, got: {keep!r}")
-        result = self._copy()
+        result = self._copy_for_arc_edit()
         if not result.options.toposimplify:
             result.options.toposimplify = epsilon
 
@@ -740,20 +788,25 @@ class Topology(Hashmap):
                 result.output["arcs"] = delta_encoding(result.output["arcs"])
                 result.output["transform"] = transform
         if not inplace:
+            result._invalidate_float_arcs()
             return result
         # update into self
         self.output["arcs"] = result.output["arcs"]
         if "transform" in result.output:
             self.output["transform"] = result.output["transform"]
         self.options.toposimplify = result.options.toposimplify
+        self._invalidate_float_arcs()
         return None
 
     def arcs(self) -> ArcSurface:
         """Decoded float arcs for chainable edits (simplify / segmentize / smooth).
 
-        Example::
+        Zero-copy-friendly form (one decode, then chained edits)::
 
             topo.arcs().simplify(10).segmentize(10).smooth(iterations=2).commit()
+
+        After a float ``commit``, a decoded cache is kept so a follow-up
+        ``simplify`` / ``smooth`` chain does not re-run ``arc_coordinates``.
         """
         return ArcSurface.from_topology(self)
 
@@ -799,6 +852,10 @@ class Topology(Hashmap):
         ``toposimplify`` instead. Chain with ``smooth``::
 
             topo.simplify(10).smooth(iterations=2)
+
+        ``simplify().smooth()`` reuses decoded float arcs (no second decode) and
+        a light arc-edit copy (shared feature objects). ``output["arcs"]`` stays
+        as ``float64`` arrays until ``to_dict`` / ``to_json``.
         """
         surface = self.arcs().simplify(
             epsilon,
@@ -847,9 +904,9 @@ class Topology(Hashmap):
         Smooth arcs without altering topological relations.
 
         High-level helper over ``arcs().smooth(...).commit()``. Default is Chaikin
-        (two iterations). Optional ``segment_length`` densifies first. Float arcs
-        are kept; the construction-grid ``transform`` is dropped. ``toposmooth``
-        is a thin alias of this method.
+        (two iterations; packed NumPy buffer). Optional ``segment_length`` densifies
+        first. Float arcs are kept; the construction-grid ``transform`` is dropped.
+        ``toposmooth`` is a thin alias of this method.
         """
         surface = self.arcs().smooth(
             method,
