@@ -810,7 +810,7 @@ class Topology(Hashmap):
         if inplace:
             surface.commit(inplace=True)
             return None
-        return surface.commit()
+        return cast(Self, surface.commit())
 
     @overload
     def smooth(
@@ -860,7 +860,7 @@ class Topology(Hashmap):
         if inplace:
             surface.commit(inplace=True, smooth_method=method)
             return None
-        return surface.commit(smooth_method=method)
+        return cast(Self, surface.commit(smooth_method=method))
 
     @overload
     def toposmooth(
@@ -894,12 +894,22 @@ class Topology(Hashmap):
         inplace: bool = False,
     ) -> Self | None:
         """Thin alias of ``smooth`` (convenient recipe name beside ``toposimplify``)."""
+        # Branch on inplace so mypy can pick the matching smooth overload.
+        if inplace:
+            self.smooth(
+                method,
+                iterations=iterations,
+                samples=samples,
+                segment_length=segment_length,
+                inplace=True,
+            )
+            return None
         return self.smooth(
             method,
             iterations=iterations,
             samples=samples,
             segment_length=segment_length,
-            inplace=inplace,
+            inplace=False,
         )
 
     def _grid(self) -> float | dict[str, Any] | None:
