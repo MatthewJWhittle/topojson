@@ -312,8 +312,7 @@ def shared_path_ends_on_grid(linestrings):
     else:
         closed = np.fromiter(
             (
-                len(a) > 2
-                and bool(np.array_equal(np.asarray(a[0]), np.asarray(a[-1])))
+                len(a) > 2 and bool(np.array_equal(np.asarray(a[0]), np.asarray(a[-1])))
                 for a in linestrings
             ),
             dtype=bool,
