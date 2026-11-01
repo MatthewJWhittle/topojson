@@ -1,0 +1,31 @@
+[build-system]
+requires = ["maturin>=1.4,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "topojson-core"
+version = "0.1.0"
+description = "Optional Rust coordinate kernels for topojson (topojson._core)"
+requires-python = ">=3.11"
+license = "BSD-3-Clause"
+authors = [{ name = "Matthew J Whittle" }]
+classifiers = [
+    "License :: OSI Approved :: BSD License",
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: Implementation :: CPython",
+]
+
+# Build from repo root so module-name topojson._core lands in topojson/_core*.so:
+#   maturin develop --release -m rust/Cargo.toml
+#   # or, from this directory with python-source pointing at parent:
+#   maturin build --release
+
+[tool.maturin]
+manifest-path = "Cargo.toml"
+module-name = "topojson._core"
+python-source = ".."
+features = ["pyo3/extension-module"]
+# Only ship the extension in the wheel — strip pure-Python package files that
+# python-source would otherwise include. Maturin still needs the package dir
+# to exist for the module path.
+include = []

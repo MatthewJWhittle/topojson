@@ -202,29 +202,24 @@ class Dedup(Cut):
         vals2keep = bk_dups[:, 0]
         vals2pop = bk_dups[:, 1]
 
-        # remove duplicate linestrings (loop over indices backwards to avoid popping
-        # subsequent indices)
-        for idx in sorted(vals2pop, reverse=True):
-            del linestring_list[idx]
+        # Drop duplicates in one rebuild (avoids O(n²) list `del` on large meshes).
+        n = len(linestring_list)
+        keep = np.ones(n, dtype=bool)
+        keep[vals2pop] = False
+        kept_idx = np.flatnonzero(keep)
+        new_list = [linestring_list[i] for i in kept_idx.tolist()]
+        linestring_list[:] = new_list
+        # old index -> new index (-1 for popped)
+        remap = np.full(n, -1, dtype=np.int64)
+        remap[kept_idx] = np.arange(len(kept_idx), dtype=np.int64)
+        # popped arcs remap to the kept duplicate partner
+        remap[vals2pop] = remap[vals2keep]
 
-        # prepare bookkeeping array, add +1 so NaN can be 0 and array only contains
-        # positive integers
-        arr = array_bk + 1
-        arr[np.isnan(arr)] = 0
-        arr = arr.astype(np.int64)
-
-        # replace duplicates by single values, add +1 since NaNs are on 0
-        arr_map = map_values(arr, vals2pop + 1, vals2keep + 1)
-
-        # popped indices changes the bookkeeping, align decremented indices
-        # add +1 since NaNs are on 0
-        arr_bin = np.digitize(arr_map, sorted(vals2pop + 1), right=False)
-        arr_new = arr_map - arr_bin
-
-        # set 0 to nan and subtract -1
-        arr_new = arr_new.astype(float)
-        arr_new[arr_new == 0] = np.nan
-        arr_new -= 1
+        # prepare bookkeeping array
+        arr = array_bk.astype(float).copy()
+        valid = ~np.isnan(arr)
+        arr[valid] = remap[arr[valid].astype(np.int64)]
+        arr_new = arr
 
         # collect new indices of shared arcs
         u, c = np.unique(arr_new[~np.isnan(arr_new)], return_counts=True)
