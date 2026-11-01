@@ -81,6 +81,16 @@ class Topology(Hashmap):
         computed Topology (`topo.output["transform"]`). The grid then stays the same
         when features are added or removed.
         Default is `True` (which correspond to a quantize factor of `1e5`).
+
+        Guidance for habitat / OBIA meshes (Living England, C-CAP, and similar):
+        prefer ``prequantize=True`` (or an explicit factor / fixed transform) when
+        shared borders are already coincident enough for the construction grid —
+        join/cut then use the linear quantized path and Topology wall is typically
+        several times faster than ``False``. Use ``prequantize=False`` when you
+        need exact float shared-border matching via GEOS pairwise intersections
+        (slower; use sparingly on mid/wide meshes). After ``simplify`` / ``smooth``
+        the construction-grid ``transform`` is dropped; do not re-quantize
+        smoothed float arcs onto that grid.
     topoquantize : boolean, int or dict
         If the topoquantization parameter is specified, the input geometry is quantized
         after the topology is constructed. If the topology is already quantized this
@@ -186,8 +196,15 @@ class Topology(Hashmap):
         # execute main function of Topology
         self.output = self._topo(self.output)
 
+        # Decoded float arcs from the last ArcSurface.commit (avoids re-decode).
+        self._float_arcs: list[np.ndarray] | None = None
+
         # per feature a hash of its input geometry, used by sync()
         self._source_hashes = _source_hashes(data)
+
+    def _invalidate_float_arcs(self) -> None:
+        """Drop the decoded float-arc cache after arcs or transform change."""
+        self._float_arcs = None
 
     def __repr__(self) -> str:
         return f"Topology(\n{pprint.pformat(self.output)}\n)"
@@ -578,6 +595,7 @@ class Topology(Hashmap):
         result.output["arcs"] = delta_encoding(arcs_qnt)
         result.output["transform"] = transform
         result.options.topoquantize = quant_factor
+        result._invalidate_float_arcs()
 
         if not inplace:
             return result
@@ -585,6 +603,7 @@ class Topology(Hashmap):
         self.output["arcs"] = result.output["arcs"]
         self.output["transform"] = result.output["transform"]
         self.options.topoquantize = result.options.topoquantize
+        self._invalidate_float_arcs()
         return None
 
     @overload
@@ -740,20 +759,25 @@ class Topology(Hashmap):
                 result.output["arcs"] = delta_encoding(result.output["arcs"])
                 result.output["transform"] = transform
         if not inplace:
+            result._invalidate_float_arcs()
             return result
         # update into self
         self.output["arcs"] = result.output["arcs"]
         if "transform" in result.output:
             self.output["transform"] = result.output["transform"]
         self.options.toposimplify = result.options.toposimplify
+        self._invalidate_float_arcs()
         return None
 
     def arcs(self) -> ArcSurface:
         """Decoded float arcs for chainable edits (simplify / segmentize / smooth).
 
-        Example::
+        Zero-copy-friendly form (one decode, then chained edits)::
 
             topo.arcs().simplify(10).segmentize(10).smooth(iterations=2).commit()
+
+        After a float ``commit``, a decoded cache is kept so a follow-up
+        ``simplify`` / ``smooth`` chain does not re-run ``arc_coordinates``.
         """
         return ArcSurface.from_topology(self)
 
@@ -799,6 +823,10 @@ class Topology(Hashmap):
         ``toposimplify`` instead. Chain with ``smooth``::
 
             topo.simplify(10).smooth(iterations=2)
+
+        Prefer ``topo.arcs().simplify(...).smooth(...).commit()`` when avoiding
+        intermediate list materialization matters; after this helper commits, the
+        float-arc cache stays warm for a following ``smooth``.
         """
         surface = self.arcs().simplify(
             epsilon,
@@ -847,9 +875,9 @@ class Topology(Hashmap):
         Smooth arcs without altering topological relations.
 
         High-level helper over ``arcs().smooth(...).commit()``. Default is Chaikin
-        (two iterations). Optional ``segment_length`` densifies first. Float arcs
-        are kept; the construction-grid ``transform`` is dropped. ``toposmooth``
-        is a thin alias of this method.
+        (two iterations; packed NumPy buffer). Optional ``segment_length`` densifies
+        first. Float arcs are kept; the construction-grid ``transform`` is dropped.
+        ``toposmooth`` is a thin alias of this method.
         """
         surface = self.arcs().smooth(
             method,

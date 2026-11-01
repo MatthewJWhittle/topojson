@@ -335,6 +335,41 @@ def test_extract_geopandas_geodataframe():
     assert len(topo["bookkeeping_geoms"]) == 3
 
 
+def test_extract_geopandas_polygon_fast_path_matches_legacy():
+    """Array-native GeoDataFrame extract matches the dict / geo_interface path."""
+    data = geopandas.read_file("tests/files_geojson/naturalearth_alb_grc.geojson")
+    fast = Extract(data).to_dict()
+
+    # Force the pre-array path (full to_dict + per-feature geo_interface).
+    orig = Extract._extract_geopandas_features
+
+    def _legacy(self, geom, *, is_frame=True):
+        if is_frame:
+            if geom.index.is_unique:
+                self._data = geom.to_dict(orient="index")
+            else:
+                self._data = dict(enumerate(geom.to_dict(orient="records")))
+        else:
+            self._data = geom.to_dict()
+        self._extract_records()
+
+    Extract._extract_geopandas_features = _legacy
+    try:
+        slow = Extract(data).to_dict()
+    finally:
+        Extract._extract_geopandas_features = orig
+
+    assert fast["bookkeeping_geoms"] == slow["bookkeeping_geoms"]
+    assert len(fast["linestrings"]) == len(slow["linestrings"])
+    for a, b in zip(fast["linestrings"], slow["linestrings"]):
+        assert list(a.coords) == list(b.coords)
+    assert fast["objects"].keys() == slow["objects"].keys()
+    for key in fast["objects"]:
+        assert fast["objects"][key]["type"] == slow["objects"][key]["type"]
+        assert fast["objects"][key]["arcs"] == slow["objects"][key]["arcs"]
+        assert fast["objects"][key]["properties"] == slow["objects"][key]["properties"]
+
+
 # dict should have a valued key:geom_object. Otherwise key:value is removed
 def test_extract_invalid_dict_item():
     data = {

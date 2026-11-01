@@ -81,6 +81,12 @@ python tests/bench_scale.py run --habitat --prequantize=both
 
 Rows append to `tests/bench_cache/runs/summary.jsonl`. Full families, TOP10NL, and rasters omit `--fast`. `--raster_source=tampa_ccap` selects C-CAP instead of Chesapeake. The in-tree chart workflow still uses `tests/benchmark_compute.py`.
 
+For habitat / OBIA meshes, prefer `prequantize=True` when shared borders are already coincident enough for the construction grid (often several times faster than `False` on Living England mid). Use `prequantize=False` only when you need exact float shared-border matching. Compose edits with one decode:
+
+```python
+topo.arcs().simplify(10).smooth(iterations=2).commit()
+```
+
 ## Other resources
 
 For a better understanding how the different included simplification algorithms work

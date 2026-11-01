@@ -44,6 +44,24 @@ def test_topology_simplify_smooth_helpers_chain():
     assert sum(len(a) for a in out.output["arcs"]) > 2
 
 
+def test_float_arc_cache_avoids_redecode_after_commit():
+    topo = topojson.Topology([_zigzag()], prequantize=True)
+    assert topo._float_arcs is None
+    simplified = topo.simplify(0.1)
+    assert simplified._float_arcs is not None
+    assert "transform" not in simplified.output
+    # Warm cache: arcs() reuses the committed float arrays (no re-decode).
+    surface = simplified.arcs()
+    assert all(
+        a is b for a, b in zip(surface._coords, simplified._float_arcs, strict=True)
+    )
+    smoothed = simplified.smooth(iterations=1)
+    assert smoothed._float_arcs is not None
+    # Quantized toposimplify drops the float cache.
+    q = topo.toposimplify(0.1)
+    assert q._float_arcs is None
+
+
 def test_toposmooth_is_alias_of_smooth():
     topo = topojson.Topology([_zigzag()], prequantize=False)
     a = topo.smooth(iterations=2).to_dict()
