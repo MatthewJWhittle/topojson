@@ -10,6 +10,8 @@ Main Features
   - Options to prequantize and presimplify the geometric features preparatory
     computing the topology.
   - Options to topoquantize and toposimplify after the topology is computed
+  - Composable float-arc edits (`Topology.arcs` / `simplify` / `smooth`) and
+    Chaikin or Catmull-Rom `toposmooth` after simplify
   - Choose between the package `shapely` or `simplification` to simplify the
     linestrings or arcs, or `geos` to presimplify polygons as a coverage.
   - Add, remove or synchronise features in an existing topology, without computing
@@ -25,4 +27,5 @@ Main Features
 
 __version__ = "2.2"
 
+from .arcs import ArcSurface  # noqa
 from .core.topology import Topology  # noqa

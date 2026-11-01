@@ -18,6 +18,7 @@ from .._types import (
     Transform,
     WindingOrder,
 )
+from ..arcs import ArcSurface
 from ..ops import (
     arc_areas,
     arc_coordinates,
@@ -28,7 +29,6 @@ from ..ops import (
     restore_collapsed_rings,
     simplify,
     simplify_keep,
-    smooth_arcs,
     validate_transform,
 )
 from ..utils import (
@@ -748,6 +748,120 @@ class Topology(Hashmap):
         self.options.toposimplify = result.options.toposimplify
         return None
 
+    def arcs(self) -> ArcSurface:
+        """Decoded float arcs for chainable edits (simplify / segmentize / smooth).
+
+        Example::
+
+            topo.arcs().simplify(10).segmentize(10).smooth(iterations=2).commit()
+        """
+        return ArcSurface.from_topology(self)
+
+    @overload
+    def simplify(
+        self,
+        epsilon: float | None = None,
+        *,
+        keep: float | None = None,
+        simplify_algorithm: Algorithm | None = None,
+        simplify_with: Package | None = None,
+        prevent_oversimplify: bool | None = None,
+        inplace: Literal[False] = False,
+    ) -> Self: ...
+
+    @overload
+    def simplify(
+        self,
+        epsilon: float | None = None,
+        *,
+        keep: float | None = None,
+        simplify_algorithm: Algorithm | None = None,
+        simplify_with: Package | None = None,
+        prevent_oversimplify: bool | None = None,
+        inplace: Literal[True],
+    ) -> None: ...
+
+    def simplify(
+        self,
+        epsilon: float | None = None,
+        *,
+        keep: float | None = None,
+        simplify_algorithm: Algorithm | None = None,
+        simplify_with: Package | None = None,
+        prevent_oversimplify: bool | None = None,
+        inplace: bool = False,
+    ) -> Self | None:
+        """
+        Simplify arcs in float space (no construction-grid re-quantize).
+
+        High-level helper over ``arcs().simplify(...).commit()``. For the classic
+        quantized recipe that snaps simplified arcs back onto the grid, use
+        ``toposimplify`` instead. Chain with ``smooth``::
+
+            topo.simplify(10).smooth(iterations=2)
+        """
+        surface = self.arcs().simplify(
+            epsilon,
+            keep=keep,
+            simplify_algorithm=simplify_algorithm,
+            simplify_with=simplify_with,
+            prevent_oversimplify=prevent_oversimplify,
+        )
+        if inplace:
+            surface.commit(inplace=True)
+            return None
+        return surface.commit()
+
+    @overload
+    def smooth(
+        self,
+        method: SmoothMethod = "chaikin",
+        *,
+        iterations: int = 2,
+        samples: int = 6,
+        segment_length: float | None = None,
+        inplace: Literal[False] = False,
+    ) -> Self: ...
+
+    @overload
+    def smooth(
+        self,
+        method: SmoothMethod = "chaikin",
+        *,
+        iterations: int = 2,
+        samples: int = 6,
+        segment_length: float | None = None,
+        inplace: Literal[True],
+    ) -> None: ...
+
+    def smooth(
+        self,
+        method: SmoothMethod = "chaikin",
+        *,
+        iterations: int = 2,
+        samples: int = 6,
+        segment_length: float | None = None,
+        inplace: bool = False,
+    ) -> Self | None:
+        """
+        Smooth arcs without altering topological relations.
+
+        High-level helper over ``arcs().smooth(...).commit()``. Default is Chaikin
+        (two iterations). Optional ``segment_length`` densifies first. Float arcs
+        are kept; the construction-grid ``transform`` is dropped. ``toposmooth``
+        is a thin alias of this method.
+        """
+        surface = self.arcs().smooth(
+            method,
+            iterations=iterations,
+            samples=samples,
+            segment_length=segment_length,
+        )
+        if inplace:
+            surface.commit(inplace=True, smooth_method=method)
+            return None
+        return surface.commit(smooth_method=method)
+
     @overload
     def toposmooth(
         self,
@@ -779,89 +893,14 @@ class Topology(Hashmap):
         segment_length: float | None = None,
         inplace: bool = False,
     ) -> Self | None:
-        """
-        Smooth constructed arcs without altering topological relations. Apply after
-        `toposimplify`: each shared border is one arc, so neighbours stay coincident.
-        Arc endpoints stay fixed so T- and multi-way junctions do not move.
-
-        Default is Chaikin corner-cutting (two iterations). Catmull-Rom is the
-        alternate interpolating spline (passes through the simplified vertices).
-        Optional ``segment_length`` densifies arcs first so the Chaikin cut radius
-        tracks a chosen ground length (Smoothify-style), without dissolving the
-        mesh. Smoothed arcs are stored as floats; the construction-grid
-        `transform` is dropped so re-quantization does not stair-step the curve.
-        Optional fine `topoquantize` remains available at export.
-
-        Parameters
-        ----------
-        method : {"chaikin", "catmull_rom"}, optional
-            Smoothing algorithm. Default is `"chaikin"`.
-        iterations : int, optional
-            Chaikin corner-cutting passes. Default is `2`. Hard-capped at `5`.
-            Ignored for Catmull-Rom.
-        samples : int, optional
-            Catmull-Rom points inserted per segment between control vertices.
-            Default is `6`. Ignored for Chaikin.
-        segment_length : float, optional
-            If set, densify each arc so no edge exceeds this length (same units as
-            the coordinates) before smoothing. Endpoints stay fixed. Default is
-            `None` (no densify).
-        inplace : bool, optional
-            If `True`, do operation inplace and return `None`.
-            Default is `False`.
-
-        Returns
-        -------
-        object or None
-            Topology with smoothed float arcs if `inplace` is `False`.
-        """
-        if method not in ("chaikin", "catmull_rom"):
-            raise ValueError(
-                f"method must be 'chaikin' or 'catmull_rom', got: {method!r}"
-            )
-        if method == "chaikin":
-            if not isinstance(iterations, int) or isinstance(iterations, bool):
-                raise ValueError(f"iterations must be an int, got: {iterations!r}")
-            if iterations < 0 or iterations > 5:
-                raise ValueError(
-                    f"iterations must be between 0 and 5 inclusive, got: {iterations}"
-                )
-        else:
-            if not isinstance(samples, int) or isinstance(samples, bool):
-                raise ValueError(f"samples must be an int, got: {samples!r}")
-            if samples < 0:
-                raise ValueError(f"samples must be >= 0, got: {samples}")
-        if segment_length is not None and segment_length <= 0:
-            raise ValueError(
-                f"segment_length must be > 0 when set, got: {segment_length!r}"
-            )
-
-        result = self._copy()
-        result.options.toposmooth = method
-        arcs = result.output["arcs"]
-        if arcs:
-            np_arcs = arc_coordinates(arcs, result.output.get("transform"))
-            result.output["arcs"] = smooth_arcs(
-                np_arcs,
-                method=method,
-                iterations=iterations,
-                samples=samples,
-                segment_length=segment_length,
-            )
-            # Do not re-quantize onto the construction grid (would stair-step curves).
-            result.output.pop("transform", None)
-            lsbs = bounds(result.output["arcs"])
-            ptbs = bounds(result.output["coordinates"])
-            result.output["bbox"] = compare_bounds(lsbs, ptbs)
-
-        if not inplace:
-            return result
-        self.output["arcs"] = result.output["arcs"]
-        self.output.pop("transform", None)
-        if "bbox" in result.output:
-            self.output["bbox"] = result.output["bbox"]
-        self.options.toposmooth = result.options.toposmooth
-        return None
+        """Thin alias of ``smooth`` (convenient recipe name beside ``toposimplify``)."""
+        return self.smooth(
+            method,
+            iterations=iterations,
+            samples=samples,
+            segment_length=segment_length,
+            inplace=inplace,
+        )
 
     def _grid(self) -> float | dict[str, Any] | None:
         """The grid of the options to quantize on again: a transform (dict), a
