@@ -1,5 +1,6 @@
 import itertools
 import logging
+import os
 import pprint
 
 import numpy as np
@@ -9,6 +10,38 @@ from shapely.ops import linemerge
 from shapely.strtree import STRtree
 
 logger = logging.getLogger(__name__)
+
+# Optional Rust coordinate core (maturin). Absent → pure NumPy / Shapely path.
+_RUST = None
+_RUST_LOAD_ATTEMPTED = False
+
+
+def _rust_core():
+    """Return the ``topojson._core`` extension module, or ``None`` if unavailable."""
+    global _RUST, _RUST_LOAD_ATTEMPTED
+    if not _RUST_LOAD_ATTEMPTED:
+        _RUST_LOAD_ATTEMPTED = True
+        try:
+            from . import _core as rust_mod
+
+            _RUST = rust_mod
+        except ImportError:
+            _RUST = None
+    return _RUST
+
+
+def rust_core_available() -> bool:
+    """True when the optional PyO3 ``topojson._core`` extension is importable."""
+    return _rust_core() is not None
+
+
+def _rust_join_enabled() -> bool:
+    """Opt-in for the Rust grid join (default off; NumPy is faster at LE scale)."""
+    return os.environ.get("TOPOJSON_RUST_JOIN", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+    }
 
 
 def asvoid(arr):
@@ -299,14 +332,9 @@ def shared_path_ends_on_grid(linestrings):
     if len(linestrings) == 0:
         return set()
     xy, li = _coordinates_index(linestrings)
-    xy = xy.astype(np.int64)
-    s, h, vertex = _grid_segments(xy, li)
-    at, pts = _t_vertices(xy, li, s, h)
-    if len(at):
-        o = np.lexsort([np.abs(pts - xy[at]).sum(1), at])
-        xy = np.insert(xy, at[o] + 1, pts[o], axis=0)
-        li = np.insert(li, at[o] + 1, li[at[o]])
-        s, h, vertex = _grid_segments(xy, li)
+    xy = np.asarray(xy, dtype=np.int64).reshape(-1, 2)
+    li = np.asarray(li, dtype=np.int32)
+
     if hasattr(linestrings[0], "coords"):
         closed = shapely.is_closed(np.asarray(linestrings, dtype=object))
     else:
@@ -318,6 +346,36 @@ def shared_path_ends_on_grid(linestrings):
             dtype=bool,
             count=len(linestrings),
         )
+
+    # Rust join exists on topojson._core but is not the default: the NumPy
+    # vectorized path is faster on Living England-scale meshes. Opt in with
+    # TOPOJSON_RUST_JOIN=1 once the Rust port matches NumPy throughput.
+    rust = _rust_core()
+    if rust is not None and _rust_join_enabled():
+        try:
+            points, pairs = rust.shared_path_ends_on_grid(xy, li, closed)
+            points = np.asarray(points, dtype=np.int64).reshape(-1, 2)
+            if len(pairs):
+                geoms = _as_linestring_list(linestrings)
+                ends = shared_path_ends(
+                    [(geoms[int(i)], geoms[int(j)]) for i, j in pairs]
+                )
+            else:
+                ends = set()
+            return ends | {tuple(p) for p in points.tolist()}
+        except Exception:
+            logger.debug(
+                "rust shared_path_ends_on_grid failed; using NumPy path",
+                exc_info=True,
+            )
+
+    s, h, vertex = _grid_segments(xy, li)
+    at, pts = _t_vertices(xy, li, s, h)
+    if len(at):
+        o = np.lexsort([np.abs(pts - xy[at]).sum(1), at])
+        xy = np.insert(xy, at[o] + 1, pts[o], axis=0)
+        li = np.insert(li, at[o] + 1, li[at[o]])
+        s, h, vertex = _grid_segments(xy, li)
     points, pairs = _junction_vertices(xy, li, s, h, vertex, closed)
     if len(pairs):
         geoms = _as_linestring_list(linestrings)
@@ -528,7 +586,7 @@ def cut_lines_on_grid(linestrings, junctions, is_ring):
     ----------
     linestrings : list of LineString or (n, 2) arrays
         Lines with integer coordinates
-    junctions : list of Point
+    junctions : list of Point or (j, 2) array
         Junctions with integer coordinates
     is_ring : numpy.ndarray of bool
         True for the lines that are the ring of a polygon
@@ -540,14 +598,34 @@ def cut_lines_on_grid(linestrings, junctions, is_ring):
     numpy.ndarray
         Number of parts of each line
     """
-    # STRtree query needs geometries; batch-build once if we were given arrays.
-    lines = np.asarray(_as_linestring_list(linestrings), dtype=object)
-    junctions = np.asarray(junctions, dtype=object)
-    xy, li = shapely.get_coordinates(lines, return_index=True)
-    jxy = shapely.get_coordinates(junctions)
+    rust = _rust_core()
+    n_lines = len(linestrings)
+    if n_lines == 0:
+        return [], np.zeros(0, dtype=np.int64)
 
-    # a junction on a line that is not one of its vertices is inserted first
-    tree = shapely.STRtree(junctions)
+    xy, li = _coordinates_index(linestrings)
+    xy = np.asarray(xy, dtype=np.int64).reshape(-1, 2)
+    li = np.asarray(li, dtype=np.int32)
+    if len(junctions) == 0:
+        parts = [
+            remove_collinear_points(np.asarray(ls, dtype=np.int64).reshape(-1, 2))
+            if not hasattr(ls, "coords")
+            else remove_collinear_points(np.asarray(ls.coords, dtype=np.int64))
+            for ls in linestrings
+        ]
+        return parts, np.ones(n_lines, dtype=np.int64)
+
+    if hasattr(junctions[0], "coords"):
+        jxy = shapely.get_coordinates(junctions).astype(np.int64)
+        j_geoms = junctions
+    else:
+        jxy = np.asarray(junctions, dtype=np.int64).reshape(-1, 2)
+        j_geoms = list(shapely.points(jxy))
+
+    # Per-line insert detection (a junction may be a vertex of line A but need
+    # inserting into collinear line B). STRtree needs geometries.
+    lines = np.asarray(_as_linestring_list(linestrings), dtype=object)
+    tree = shapely.STRtree(j_geoms)
     line, j = tree.query(lines, predicate="intersects")
     on_vertex = np.isin(_hash(line, *jxy[j].T), _hash(li, *xy.T))
     insert = np.unique(line[~on_vertex])
@@ -555,14 +633,32 @@ def cut_lines_on_grid(linestrings, junctions, is_ring):
         coords = np.split(xy, np.flatnonzero(np.diff(li)) + 1)
         for i in insert.tolist():
             coords[i] = insert_coords_in_line(lines[i], tree)[0]
-        li = np.repeat(np.arange(len(lines)), [len(c) for c in coords])
-        xy = np.concatenate(coords)
+        li = np.repeat(np.arange(len(lines), dtype=np.int32), [len(c) for c in coords])
+        xy = np.concatenate(coords).astype(np.int64)
+
+    junction_hashes = _hash(*jxy.T)
+
+    # After any inserts, Rust can cut on packed arrays (no further Shapely).
+    if rust is not None and len(insert) == 0:
+        try:
+            parts_xy, offsets, n_parts = rust.cut_lines_on_grid(
+                xy, li, jxy, np.asarray(is_ring, dtype=bool)
+            )
+            parts = [
+                parts_xy[int(offsets[i]) : int(offsets[i + 1])]
+                for i in range(len(offsets) - 1)
+            ]
+            return parts, np.asarray(n_parts, dtype=np.int64)
+        except Exception:
+            logger.debug(
+                "rust cut_lines_on_grid failed; using NumPy path", exc_info=True
+            )
 
     # rotate a ring to start at its first junction
-    split = np.isin(_hash(*xy.T), _hash(*jxy.T))
-    count = np.bincount(li, minlength=len(lines))
+    split = np.isin(_hash(*xy.T), junction_hashes)
+    count = np.bincount(li, minlength=n_lines)
     pos = np.arange(len(xy)) - (np.cumsum(count) - count)[li]
-    first = np.zeros(len(lines), np.intp)
+    first = np.zeros(n_lines, np.intp)
     first[li[split][::-1]] = pos[split][::-1]
     shift, n = (first * is_ring)[li], count[li] - 1
     rotated = np.where(pos == n, shift, (pos + shift) % np.maximum(n, 1))
@@ -583,7 +679,7 @@ def cut_lines_on_grid(linestrings, junctions, is_ring):
     keep = np.ones(len(xy), bool)
     keep[mid[cross == 0]] = False
     parts = _split(xy[keep], np.flatnonzero(start[keep])[1:])
-    return parts, np.bincount(li[take][start], minlength=len(lines))
+    return parts, np.bincount(li[take][start], minlength=n_lines)
 
 
 def fast_split(line, splitter, is_ring):
@@ -1590,6 +1686,12 @@ def chaikin(xy, iterations=2):
         raise ValueError(f"expected (n, 2) coordinates, got shape {pts.shape}")
     if len(pts) < 3 or iterations <= 0:
         return pts.copy()
+    rust = _rust_core()
+    if rust is not None:
+        try:
+            return np.asarray(rust.chaikin(pts, int(iterations)), dtype=np.float64)
+        except Exception:
+            logger.debug("rust chaikin failed; using NumPy path", exc_info=True)
     packed = chaikin_many([pts], iterations=iterations)
     return packed[0]
 

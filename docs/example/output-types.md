@@ -98,7 +98,7 @@ Serialize the Topology object into JSON. This is what is called TopoJSON.
     ]
     geometry.GeometryCollection([geometry.shape(g) for g in data])
     ```
-    <figure class="parts" data-src="../json/fig_output_two_polygons.json" data-label="Two squares that share a side"><svg></svg></figure>
+    <figure class="parts" data-src="../../json/fig_output_two_polygons.json" data-label="Two squares that share a side"><svg></svg></figure>
 
     The Topology can be computed
 
@@ -189,7 +189,7 @@ Serialize the Topology object into a visual Support Vector Graphic (SVG) mesh.
     ```python exec="on" session="exampleoutput-types"
     topo.to_svg()
     ```
-    <figure class="parts" data-src="../json/fig_output_to_svg.json" data-label="The arcs as a mesh"><svg></svg></figure>
+    <figure class="parts" data-src="../../json/fig_output_to_svg.json" data-label="The arcs as a mesh"><svg></svg></figure>
 
     The output is a mesh and information of polygons are not included. To draw each captured linestring separate use `separate=True`.
 
@@ -200,7 +200,7 @@ Serialize the Topology object into a visual Support Vector Graphic (SVG) mesh.
     ```python exec="on" session="exampleoutput-types"
     topo.to_svg(separate=True)
     ```
-    <figure class="parts" data-src="../json/fig_output_to_svg_separate.json" data-label="Each arc on its own"><svg></svg></figure>
+    <figure class="parts" data-src="../../json/fig_output_to_svg_separate.json" data-label="Each arc on its own"><svg></svg></figure>
 
 
 * * * 
@@ -355,7 +355,7 @@ Serialize the Topology object into a GeoPandas GeoDataFrame. This destroys the T
     | 1 | POLYGON ((-8.665666773160552 27.65613579897171, ... | Africa | 906.5 | ESH | W. Sahara | 603253 |
     | 2 | POLYGON ((29.339827093193016 -4.499877032452222,... | Africa | 66010.0 | COD | Dem. Rep. Congo | 83301151 |
 
-    <figure class="parts" data-src="../json/fig_output_to_gdf.json" data-label="The polygons of Africa as a GeoDataFrame"><svg></svg></figure>
+    <figure class="parts" data-src="../../json/fig_output_to_gdf.json" data-label="The polygons of Africa as a GeoDataFrame"><svg></svg></figure>
 
 
 
@@ -436,7 +436,7 @@ The sliders set the tolerance of `toposimplify` and the `topoquantize` factor. W
 
     **Try it in your browser.** Here topojson runs in your browser, in [Pyodide](https://pyodide.org) (Python in WebAssembly). The slider _keep_ sets the share of the vertices that Douglas-Peucker keeps (`toposimplify(keep=...)`); below it is the tolerance `epsilon` that gives the same result.
 
-    <figure class="widget" data-src="../json/lens_africa.json"><canvas role="img" aria-label="The arcs of Africa, simplified and quantized by topojson in the browser"></canvas></figure>
+    <figure class="widget" data-src="../../json/lens_africa.json"><canvas role="img" aria-label="The arcs of Africa, simplified and quantized by topojson in the browser"></canvas></figure>
     <script src="../js/widget.js" defer></script>
 
     **Note:** `prevent_oversimplify` is set to `False` since the Douglas-Peucker algorithm within `simplification` can not prevent oversimplification.

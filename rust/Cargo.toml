@@ -1,0 +1,20 @@
+[package]
+name = "topojson_core"
+version = "0.1.0"
+edition = "2021"
+description = "Array-native quantized topology kernels for topojson (PyO3)"
+license = "BSD-3-Clause"
+authors = ["Matthew J Whittle"]
+readme = "README.md"
+
+[lib]
+name = "_core"
+crate-type = ["cdylib"]
+
+[dependencies]
+numpy = "0.23"
+pyo3 = { version = "0.23", features = ["extension-module"] }
+
+[profile.release]
+lto = true
+codegen-units = 1

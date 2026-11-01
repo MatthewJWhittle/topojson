@@ -88,7 +88,7 @@ class Join(Extract):
         """
         serialize_as_svg(self.output, separate, include_junctions)
 
-    def _joiner(self, data):
+    def _joiner(self, data):  # noqa: C901
         """
         Entry point for the class Join. This function identifies junctions
         (intersection points) of shared paths.
@@ -198,8 +198,10 @@ class Join(Extract):
             data["linestrings"], data["transform"] = quantize(
                 data["linestrings"], data["bbox"], quant_factor, transform=transform
             )
-            # Junction / cut STRtree paths need geometries; points stay arrays.
-            data["linestrings"] = _as_linestring_list(data["linestrings"])
+            # Keep packed arrays on the path-connected grid path (default).
+            # shared_coords / SVG / STRtree still need LineStrings.
+            if self.options.shared_coords:
+                data["linestrings"] = _as_linestring_list(data["linestrings"])
 
             data["coordinates"], data["transform"] = quantize(
                 data["coordinates"], data["bbox"], quant_factor, transform=transform

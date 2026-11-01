@@ -1,4 +1,6 @@
 [build-system]
+# Pure-Python wheels stay on flit (CI / Pyodide). Optional Rust core:
+#   maturin develop --release -m rust/Cargo.toml
 requires = ["flit_core >=2,<4"]
 build-backend = "flit_core.buildapi"
 
@@ -27,6 +29,7 @@ dev = [
     "polars",
     "pooch",
     "fire",
+    "maturin",
 ]
 bench = [
     "geopandas",
@@ -43,6 +46,9 @@ docs = [
     # (fixed in oreilles/polars-st#85, not released yet)
     "polars<2",
     "polars-st",
+]
+rust = [
+    "maturin",
 ]
 
 [project.urls]

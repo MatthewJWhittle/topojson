@@ -62,6 +62,20 @@ Further, optional soft dependencies are:
 - `geopandas` - parse your TopoJSON output directly into a GeoDataFrame
 - `ipywidgets` - make your life complete with the interactive experience
 
+### Optional Rust coordinate core (`topojson._core`)
+
+Pure Python/NumPy remains the default and works without a compiler. For faster
+quantized cut (and Chaikin), build the optional PyO3 extension (BSD-3, no GEOS):
+
+```bash
+pip install maturin
+maturin develop --release -m rust/Cargo.toml
+```
+
+The public `Topology` / `ArcSurface` API is unchanged; kernels fall back to NumPy
+when the extension is absent. Grid join stays on NumPy by default (faster at
+Living England scale); set `TOPOJSON_RUST_JOIN=1` only to exercise the Rust join.
+
 ## Scale benchmarks
 
 Public-data size ladder (optional; not the CI chart job):
