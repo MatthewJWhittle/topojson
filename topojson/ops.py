@@ -1427,6 +1427,211 @@ def simplify_coverage(linestrings, polygons, epsilon, exterior_cw=None):
     return linestrings
 
 
+def segmentize(xy, max_segment_length):
+    """
+    Densify an open polyline so no edge is longer than ``max_segment_length``.
+
+    Endpoints stay fixed. Used before Chaikin so the corner-cutting radius tracks a
+    chosen ground length (Smoothify-style ``segment_length``), without dissolving
+    shared borders. Arcs already shorter than the cap are unchanged.
+
+    Parameters
+    ----------
+    xy : array-like of shape (n, 2)
+        Arc coordinates in float space
+    max_segment_length : float
+        Maximum edge length in the same units as ``xy`` (must be > 0)
+
+    Returns
+    -------
+    numpy.ndarray
+        Densified (m, 2) coordinates; ``xy[0]`` and ``xy[-1]`` unchanged
+    """
+    pts = np.asarray(xy, dtype=np.float64)
+    if pts.ndim != 2 or pts.shape[1] != 2:
+        raise ValueError(f"expected (n, 2) coordinates, got shape {pts.shape}")
+    if max_segment_length <= 0:
+        raise ValueError(f"max_segment_length must be > 0, got: {max_segment_length!r}")
+    if len(pts) < 2:
+        return pts.copy()
+
+    out = [pts[0]]
+    for i in range(len(pts) - 1):
+        p0 = pts[i]
+        p1 = pts[i + 1]
+        dist = float(np.linalg.norm(p1 - p0))
+        if dist <= max_segment_length or dist == 0.0:
+            out.append(p1)
+            continue
+        n = int(np.ceil(dist / max_segment_length))
+        for k in range(1, n):
+            out.append(p0 + (p1 - p0) * (k / n))
+        out.append(p1)
+    result = np.asarray(out, dtype=np.float64)
+    result[0] = pts[0]
+    result[-1] = pts[-1]
+    return result
+
+
+def chaikin(xy, iterations=2):
+    """
+    Chaikin corner-cutting on an open polyline with endpoints fixed (Chaikin 1974).
+
+    Each iteration replaces every segment with its 1/4 and 3/4 points and keeps the
+    first and last coordinates exactly, converging toward a quadratic B-spline. Arcs
+    with fewer than three vertices are returned unchanged (a two-point shared edge
+    stays a straight junction-to-junction link).
+
+    Parameters
+    ----------
+    xy : array-like of shape (n, 2)
+        Arc coordinates in float space
+    iterations : int
+        Number of corner-cutting passes (growth ~2x per pass)
+
+    Returns
+    -------
+    numpy.ndarray
+        Smoothed (m, 2) coordinates; ``xy[0]`` and ``xy[-1]`` unchanged
+    """
+    pts = np.asarray(xy, dtype=np.float64)
+    if pts.ndim != 2 or pts.shape[1] != 2:
+        raise ValueError(f"expected (n, 2) coordinates, got shape {pts.shape}")
+    if len(pts) < 3 or iterations <= 0:
+        return pts.copy()
+    for _ in range(iterations):
+        n = len(pts)
+        # [P0] + (Q, R) per segment + [Pn] -> 2n points; ends pinned to originals.
+        out = np.empty((2 * n, 2), dtype=np.float64)
+        p0 = pts[:-1]
+        p1 = pts[1:]
+        out[0] = pts[0]
+        out[1:-1:2] = 0.75 * p0 + 0.25 * p1
+        out[2:-1:2] = 0.25 * p0 + 0.75 * p1
+        out[-1] = pts[-1]
+        pts = out
+    return pts
+
+
+def _lerp_knot(t_a, t_b, pa, pb, t):
+    """Linear blend on a Catmull-Rom knot interval; stable when knots coincide."""
+    den = t_b - t_a
+    if abs(den) < 1e-15:
+        return np.asarray(pa, dtype=np.float64)
+    u = (t - t_a) / den
+    return (1.0 - u) * pa + u * pb
+
+
+def _catmull_rom_point(p0, p1, p2, p3, t0, t1, t2, t3, t):
+    """One centripetal Catmull-Rom sample (Barry-Goldman)."""
+    a1 = _lerp_knot(t0, t1, p0, p1, t)
+    a2 = _lerp_knot(t1, t2, p1, p2, t)
+    a3 = _lerp_knot(t2, t3, p2, p3, t)
+    b1 = _lerp_knot(t0, t2, a1, a2, t)
+    b2 = _lerp_knot(t1, t3, a2, a3, t)
+    return _lerp_knot(t1, t2, b1, b2, t)
+
+
+def catmull_rom(xy, samples=6, alpha=0.5):
+    """
+    Centripetal Catmull-Rom resampling of an open polyline with endpoints fixed.
+
+    The curve passes through every control point. Tangents at the ends use a
+    duplicated endpoint so smoothing never borrows coordinates from a neighbouring
+    arc (shared borders must stay coincident). ``samples`` is the number of
+    interpolated points inserted on each segment between consecutive controls.
+
+    Parameters
+    ----------
+    xy : array-like of shape (n, 2)
+        Arc coordinates in float space
+    samples : int
+        Interpolated points per segment (not counting the segment endpoints)
+    alpha : float
+        Knot parameterization; ``0.5`` is centripetal (avoids loops)
+
+    Returns
+    -------
+    numpy.ndarray
+        Smoothed (m, 2) coordinates; ``xy[0]`` and ``xy[-1]`` unchanged
+    """
+    pts = np.asarray(xy, dtype=np.float64)
+    if pts.ndim != 2 or pts.shape[1] != 2:
+        raise ValueError(f"expected (n, 2) coordinates, got shape {pts.shape}")
+    n = len(pts)
+    if n < 3 or samples <= 0:
+        return pts.copy()
+
+    def knot(ti, pi, pj):
+        d = float(np.linalg.norm(pj - pi))
+        # Duplicated endpoints (open-arc tangents) make d==0; keep knots strictly
+        # increasing so Barry-Goldman denominators stay defined.
+        return ti + (d**alpha if d > 0 else 1e-8)
+
+    out = [pts[0]]
+    for i in range(n - 1):
+        p1 = pts[i]
+        p2 = pts[i + 1]
+        p0 = pts[i - 1] if i > 0 else p1
+        p3 = pts[i + 2] if i + 2 < n else p2
+        t0 = 0.0
+        t1 = knot(t0, p0, p1)
+        t2 = knot(t1, p1, p2)
+        t3 = knot(t2, p2, p3)
+        if t2 - t1 < 1e-15:
+            out.append(p2)
+            continue
+        # Uniform parameter steps between the knots of p1 and p2 (exclude p1, include
+        # interiors, then append p2 so every control vertex is kept).
+        for k in range(1, samples + 1):
+            t = t1 + (t2 - t1) * (k / (samples + 1))
+            out.append(_catmull_rom_point(p0, p1, p2, p3, t0, t1, t2, t3, t))
+        out.append(p2)
+    result = np.asarray(out, dtype=np.float64)
+    result[0] = pts[0]
+    result[-1] = pts[-1]
+    return result
+
+
+def smooth_arcs(arcs, method="chaikin", iterations=2, samples=6, segment_length=None):
+    """
+    Smooth each decoded float arc in place-style, returning new coordinate lists.
+
+    Parameters
+    ----------
+    arcs : list of array-like
+        Decoded arc coordinates (one (n, 2) array per arc)
+    method : {"chaikin", "catmull_rom"}
+        Smoothing algorithm
+    iterations : int
+        Chaikin passes (ignored for Catmull-Rom)
+    samples : int
+        Catmull-Rom points inserted per segment (ignored for Chaikin)
+    segment_length : float, optional
+        If set, densify each arc so no edge exceeds this length before smoothing
+        (Smoothify-style controlled Chaikin radius). Endpoints stay fixed.
+
+    Returns
+    -------
+    list of list
+        Smoothed arcs as nested Python lists (TopoJSON float arcs)
+    """
+    if method not in ("chaikin", "catmull_rom"):
+        raise ValueError(
+            f"unknown smooth method {method!r}; choose 'chaikin' or 'catmull_rom'"
+        )
+    out = []
+    for arc in arcs:
+        xy = np.asarray(arc, dtype=np.float64)
+        if segment_length is not None:
+            xy = segmentize(xy, segment_length)
+        if method == "chaikin":
+            out.append(chaikin(xy, iterations=iterations).tolist())
+        else:
+            out.append(catmull_rom(xy, samples=samples).tolist())
+    return out
+
+
 def restore_collapsed_rings(arcs, original, rings):
     """
     Put back vertices of the original arcs in rings that simplification reduced to

@@ -7,8 +7,8 @@
 Downloads use pooch. Rows append to tests/bench_cache/runs/summary.jsonl.
 Every successful Topology run also times toposimplify when --simplify is on
 (default for --fast; default on for non-fast / medium as well).
-Smooth is recorded as smooth_not_implemented (absent in 2.2); measure_smooth
-is the one-call hook for a future toposmooth API.
+When Topology.toposmooth is present, measure_smooth times Chaikin-2 (default)
+after toposimplify and records growth; otherwise smooth_not_implemented.
 Dataset / family specs live in the Project docs, not here.
 """
 
@@ -145,32 +145,52 @@ def resolve_simplify_tolerances(
     return list(DEFAULT_SIMPLIFY_M)
 
 
-def measure_smooth(topo: Any, *, tolerance: float | None = None) -> dict[str, Any]:
-    """Hook for future Topology.toposmooth; one call site when the API lands.
+def measure_smooth(
+    topo: Any,
+    *,
+    method: str = "chaikin",
+    iterations: int = 2,
+    samples: int = 6,
+) -> dict[str, Any]:
+    """Time Topology.toposmooth after toposimplify (one call site).
 
-    Until then every row keeps ``smooth: smooth_not_implemented``. Call after
-    toposimplify so a future smooth times the simplified arcs.
+    Defaults match the library: Chaikin, two iterations. Records method,
+    iterations/samples, wall time, smoothed vertex count, and growth vs the
+    arcs handed in (usually the simplified topology).
     """
     smooth_fn = getattr(topo, "toposmooth", None)
     if not callable(smooth_fn):
         return {"smooth": SMOOTH}
+    before_arcs = getattr(topo, "output", {}).get("arcs") or []
+    before_transform = getattr(topo, "output", {}).get("transform")
+    n_before = _arc_vertices(before_arcs, before_transform)
+    kwargs: dict[str, Any] = {"method": method}
+    if method == "chaikin":
+        kwargs["iterations"] = iterations
+    elif method == "catmull_rom":
+        kwargs["samples"] = samples
     try:
-        kwargs: dict[str, Any] = {}
-        if tolerance is not None:
-            kwargs["tolerance"] = tolerance
         t0 = time.perf_counter()
-        smoothed = smooth_fn(**kwargs) if kwargs else smooth_fn()
+        smoothed = smooth_fn(**kwargs)
         wall = time.perf_counter() - t0
         out = smoothed if smoothed is not None else topo
         arcs = getattr(out, "output", {}).get("arcs") or []
         transform = getattr(out, "output", {}).get("transform")
-        return {
+        n_smoothed = _arc_vertices(arcs, transform)
+        row: dict[str, Any] = {
             "smooth": "ok",
+            "smooth_method": method,
             "smooth_wall_s": round(wall, 6),
-            "n_vertices_smoothed": _arc_vertices(arcs, transform),
+            "n_vertices_smoothed": n_smoothed,
         }
+        if method == "chaikin":
+            row["smooth_iterations"] = iterations
+        if method == "catmull_rom":
+            row["smooth_samples"] = samples
+        if n_before > 0:
+            row["smooth_growth"] = round(n_smoothed / n_before, 4)
+        return row
     except TypeError:
-        # Signature unknown until the API exists; keep the sentinel.
         return {"smooth": SMOOTH}
     except Exception:
         return {

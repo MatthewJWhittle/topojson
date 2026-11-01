@@ -7,6 +7,7 @@ lives in the Project datasets doc; this file is only the runnable steps.
 from __future__ import annotations
 
 import json
+import subprocess
 import zipfile
 from pathlib import Path
 from typing import Any
@@ -169,8 +170,16 @@ def retrieve(key: str, dest: Path) -> Path:
         extract_dir = dest / key
         if not extract_dir.exists():
             extract_dir.mkdir(parents=True)
-            with zipfile.ZipFile(path) as zf:
-                zf.extractall(extract_dir)
+            try:
+                with zipfile.ZipFile(path) as zf:
+                    zf.extractall(extract_dir)
+            except NotImplementedError:
+                # Living England (and some Defra zips) use Deflate64; Python's
+                # zipfile cannot inflate those members — fall back to unzip(1).
+                subprocess.run(
+                    ["unzip", "-o", str(path), "-d", str(extract_dir)],
+                    check=True,
+                )
         return extract_dir
     return path
 

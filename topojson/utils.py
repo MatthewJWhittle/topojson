@@ -20,6 +20,7 @@ class TopoOptions:
         topoquantize=False,
         presimplify=False,
         toposimplify=False,
+        toposmooth=False,
         shared_coords=False,
         prevent_oversimplify=True,
         simplify_with="shapely",
@@ -61,6 +62,11 @@ class TopoOptions:
             self.toposimplify = arguments["toposimplify"]
         else:
             self.toposimplify = False
+
+        if "toposmooth" in arguments:
+            self.toposmooth = arguments["toposmooth"]
+        else:
+            self.toposmooth = False
 
         if "shared_coords" in arguments:
             self.shared_coords = arguments["shared_coords"]
